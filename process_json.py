@@ -40,7 +40,7 @@ def parse_json(directory):
     chat_history = pd.json_normalize(messages)
 
     # Create column to indicate how many reacts each message got
-    chat_history['total_reacts'] = chat_history['reactions'].apply(lambda x: len(x) if isinstance(x, list) else 0)
+    chat_history['reacts_count'] = chat_history['reactions'].apply(lambda x: len(x) if isinstance(x, list) else 0)
 
     # Create column for datetime in local time zone
     chat_history['timestamp_sec'] = chat_history['timestamp_ms'] / 1000.0
@@ -53,7 +53,7 @@ def parse_json(directory):
     chat_history['hour_of_day'] = chat_history['datetime_local'].dt.hour
     chat_history['day_of_week'] = chat_history['datetime_local'].dt.day_name()
     chat_history['date'] = chat_history['datetime_local'].dt.date
-    chat_history['week_start'] = chat_history['datetime_local'].dt.to_period('W').apply(lambda x: x.start_time)
+    chat_history['week_start'] = chat_history['datetime_local'].dt.to_period('W').apply(lambda x: x.start_time).dt.date
     chat_history['month'] = chat_history['datetime_local'].dt.month_name()
     chat_history['year'] = chat_history['datetime_local'].dt.year
     
@@ -71,25 +71,31 @@ def parse_json(directory):
 def categorise_content_type(content):
     
     # Set up phrases to search for
-    call = [" joined the call.", " joined the video call.", " started sharing video.", " started a call.",
-            " started a video call."]
-    poll = ["\" in the poll.", " created a poll: ", " to the poll.", "This poll is no longer available"]
+    in_call = [" joined the call.", " joined the video call.", " started sharing video."]
+    start_call = [" started a call.", " started a video call."]
+    in_poll = ["\" in the poll.", "\" to the poll.", "This poll is no longer available."]
+    start_poll = [" created a poll: "]
+    members = [" left the group.", " to the group.", " turned off member approval. Anyone with the link can join the group."]
     group_chat = [" set your nickname to ", " cleared the nickname for ",
                            " cleared your nickname ", " set the nickname for ", " set her own nickname to ",
                            " set his own nickname to ", " set the quick reaction to ", " changed the theme to ",
-                           " as the word effect for ", " left the group. ", " to the group.",
-                           " pinned a message.", " named the group ", " changed the group photo.",
-                           " turned off member approval. Anyone with the link can join the group."]
+                           " as the word effect for ", " pinned a message.", " named the group ", " changed the group photo."]
     location = [" sent a live location."]
     reactions_misc = [" reacted \\u"]
     
     # Assign messages to content types
     if not isinstance(content, str):
         return "NA"
-    elif any(phrase in content for phrase in call):
-        return "Call"
-    elif any(phrase in content for phrase in poll):
-        return "Poll"
+    elif any(phrase in content for phrase in in_call):
+        return "In Call"
+    elif any(phrase in content for phrase in start_call):
+        return "Start Call"
+    elif any(phrase in content for phrase in in_poll):
+        return "In Poll"
+    elif any(phrase in content for phrase in start_poll):
+        return "Start Poll"
+    elif any(phrase in content for phrase in members):
+        return "Members"
     elif any(phrase in content for phrase in group_chat):
         return "GC Settings"
     elif any(phrase in content for phrase in location):
@@ -107,17 +113,17 @@ def categorise_media_type(row):
     elif not isinstance(row['is_unsent'], float):
         return "Deleted Message"
     elif not isinstance(row['files'], float):
-        return 'File Attachment'
+        return "File Attachment"
     elif not isinstance(row['gifs'], float):
-        return 'Gif'
+        return "Gif"
     elif not isinstance(row['photos'], float):
-        return 'Image'
+        return "Image"
     elif not isinstance(row['share.link'], float) or not isinstance(row['share.share_text'], float):
-        return 'Shared Link'
+        return "Shared Link"
     elif not isinstance(row['sticker.ai_stickers'], float) or not isinstance(row['sticker.uri'], float):
-        return 'Sticker'
+        return "Sticker"
     elif not isinstance(row['videos'], float):
-        return 'Video'
+        return "Video"
     else:
-        return row['content_type']
+        return "Other"
     
