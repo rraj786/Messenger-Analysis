@@ -11,7 +11,7 @@ import pandas as pd
 import pytz
 from tzlocal import get_localzone
 
-def parse_json(directory):
+def process_json(directory):
 
     """
         Read in all JSON files from specified directory and generate a 
@@ -42,6 +42,9 @@ def parse_json(directory):
     # Create column to indicate how many reacts each message got
     chat_history['reacts_count'] = chat_history['reactions'].apply(lambda x: len(x) if isinstance(x, list) else 0)
 
+    # Convert raw UTF-8 format of reactions to associated emojis
+    chat_history['reactions'] = chat_history['reactions'].apply(extract_reactions)
+
     # Create column for datetime in local time zone
     chat_history['timestamp_sec'] = chat_history['timestamp_ms'] / 1000.0
     chat_history['datetime_utc'] = pd.to_datetime(chat_history['timestamp_sec'], unit = 's')
@@ -51,59 +54,39 @@ def parse_json(directory):
     
     # Create columns for relative times
     chat_history['hour_of_day'] = chat_history['datetime_local'].dt.hour
-    chat_history['day_of_week'] = chat_history['datetime_local'].dt.day_name()
+    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    chat_history['day_of_week'] = pd.Categorical(chat_history['datetime_local'].dt.day_name(), categories = day_order, ordered = True)
     chat_history['date'] = chat_history['datetime_local'].dt.date
+    chat_history['week'] = chat_history['datetime_local'].dt.isocalendar().week
     chat_history['week_start'] = chat_history['datetime_local'].dt.to_period('W').apply(lambda x: x.start_time).dt.date
-    chat_history['month'] = chat_history['datetime_local'].dt.month_name()
+    month_order = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+    chat_history['month'] = pd.Categorical(chat_history['datetime_local'].dt.month_name(), categories = month_order, ordered = True)
+    chat_history['month_start'] = chat_history['datetime_local'].dt.to_period('M').apply(lambda x: x.start_time).dt.date
+    chat_history['quarter'] = chat_history['datetime_local'].dt.quarter
+    chat_history['quarter_start'] = chat_history['datetime_local'].dt.to_period('Q').apply(lambda x: x.start_time).dt.date
     chat_history['year'] = chat_history['datetime_local'].dt.year
     
-    # Create column to indicate content type (message, image, audio file, call, poll etc.)
-    chat_history['content_type'] = chat_history['content'].apply(categorise_content_type)
-    
-    # Create new column to indicate media type
+    # Create column to indicate media type
     chat_history['media_type'] = chat_history.apply(categorise_media_type, axis = 1)
+
+    # Create column to indicate content type
+    chat_history['content_type'] = chat_history.apply(categorise_content_type, axis = 1)
     
     # Arrange dataframe in ascending order of datetime
     chat_history = chat_history.sort_values(by = 'datetime_local')
     
     return chat_history
-    
-def categorise_content_type(content):
-    
-    # Set up phrases to search for
-    in_call = [" joined the call.", " joined the video call.", " started sharing video."]
-    start_call = [" started a call.", " started a video call."]
-    in_poll = ["\" in the poll.", "\" to the poll.", "This poll is no longer available."]
-    start_poll = [" created a poll: "]
-    members = [" left the group.", " to the group.", " turned off member approval. Anyone with the link can join the group."]
-    group_chat = [" set your nickname to ", " cleared the nickname for ",
-                           " cleared your nickname ", " set the nickname for ", " set her own nickname to ",
-                           " set his own nickname to ", " set the quick reaction to ", " changed the theme to ",
-                           " as the word effect for ", " pinned a message.", " named the group ", " changed the group photo."]
-    location = [" sent a live location."]
-    reactions_misc = [" reacted \\u"]
-    
-    # Assign messages to content types
-    if not isinstance(content, str):
-        return "NA"
-    elif any(phrase in content for phrase in in_call):
-        return "In Call"
-    elif any(phrase in content for phrase in start_call):
-        return "Start Call"
-    elif any(phrase in content for phrase in in_poll):
-        return "In Poll"
-    elif any(phrase in content for phrase in start_poll):
-        return "Start Poll"
-    elif any(phrase in content for phrase in members):
-        return "Members"
-    elif any(phrase in content for phrase in group_chat):
-        return "GC Settings"
-    elif any(phrase in content for phrase in location):
-        return "Shared Location"
-    elif any(phrase in content for phrase in reactions_misc):
-        return "Reactions Notification"
-    else:
-        return "Message"
+
+def extract_reactions(reactions):
+
+    # Check if reaction key exists for each message
+    if not isinstance(reactions, float):
+        for react in reactions:
+            emoji_char = react['reaction'].encode('latin1').decode('utf8')
+            # Update the dictionary in place with the emoji
+            react['reaction'] = emoji_char
+
+    return reactions
 
 def categorise_media_type(row):
        
@@ -124,6 +107,50 @@ def categorise_media_type(row):
         return "Sticker"
     elif not isinstance(row['videos'], float):
         return "Video"
+    elif not isinstance(row['content'], str):
+        return "Text"
     else:
         return "Other"
     
+def categorise_content_type(row):
+    
+    # Set up phrases to search for
+    in_call = [" joined the call.", " joined the video call.", " started sharing video."]
+    start_call = [" started a call.", " started a video call."]
+    poll = [" created a poll: ", "\" in the poll.", "\" to the poll.", "This poll is no longer available."]
+    left_group = [" left the group."]
+    add_group = [" to the group."]
+    group_chat = [" set your nickname to ", " cleared the nickname for ",
+                           " cleared your nickname ", " set the nickname for ", " set her own nickname to ",
+                           " set his own nickname to ", " set the quick reaction to ", " changed the theme to ",
+                           " as the word effect for ", " pinned a message.", " named the group ", " changed the group photo.",
+                           " turned off member approval. Anyone with the link can join the group."]
+    location = [" sent a live location."]
+    reactions_misc = [" to your message "]
+    
+    # Assign messages to content types
+    if not isinstance(row['content'], str):
+        if row['media_type'] == "Other":
+            return "NA"
+        elif row['media_type'] == "Deleted Message":
+            return row['media_type']
+        else:
+            return "Message"
+    elif any(phrase in row['content'] for phrase in in_call):
+        return "In Call Settings"
+    elif any(phrase in row['content'] for phrase in start_call):
+        return "Started Call"
+    elif any(phrase in row['content'] for phrase in poll):
+        return "Poll Settings"
+    elif any(phrase in row['content'] for phrase in left_group):
+        return "Left Chat"
+    elif any(phrase in row['content'] for phrase in add_group):
+        return "Added Member to Chat"
+    elif any(phrase in row['content'] for phrase in group_chat):
+        return "GC Settings"
+    elif any(phrase in row['content'] for phrase in location):
+        return "Shared Location"
+    elif any(phrase in row['content'] for phrase in reactions_misc):
+        return "Reactions Notification"
+    else:
+        return "Message"
