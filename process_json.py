@@ -5,17 +5,27 @@
 '''
 
 
+import emoji
 import json
+from nltk.corpus import stopwords
+import numpy as np
 import os
 import pandas as pd
 import pytz
+import re
 from tzlocal import get_localzone
+
+
+# Initialise stopwords for text processing
+stopwords = stopwords.words("english")
+
 
 def process_json(directory):
 
     """
         Read in all JSON files from specified directory and generate a 
-        unified dataset.
+        complete dataset contaning all chat content and new rows using 
+        feature engineering.
         
         Inputs:
             - directory (str)
@@ -38,13 +48,7 @@ def process_json(directory):
                 
     # Normalise messages into dataframe
     chat_history = pd.json_normalize(messages)
-
-    # Create column to indicate how many reacts each message got
-    chat_history['reacts_count'] = chat_history['reactions'].apply(lambda x: len(x) if isinstance(x, list) else 0)
-
-    # Convert raw UTF-8 format of reactions to associated emojis
-    chat_history['reactions'] = chat_history['reactions'].apply(extract_reactions)
-
+    
     # Create column for datetime in local time zone
     chat_history['timestamp_sec'] = chat_history['timestamp_ms'] / 1000.0
     chat_history['datetime_utc'] = pd.to_datetime(chat_history['timestamp_sec'], unit = 's')
@@ -66,48 +70,78 @@ def process_json(directory):
     chat_history['quarter_start'] = chat_history['datetime_local'].dt.to_period('Q').apply(lambda x: x.start_time).dt.date
     chat_history['year'] = chat_history['datetime_local'].dt.year
     
+    # Convert raw UTF-8 format of messages to readable format
+    chat_history['content'] = chat_history['content'].apply(lambda x: x.encode('latin1').decode('utf8') if isinstance(x, str) else x)
+
+    # Create column to find number of words used in each message
+    chat_history['word_count'] = chat_history['content'].apply(lambda x: len(x.split()) if isinstance(x, str) else 0)
+                                                                
+    # Create column to indicate how many reacts each message got
+    chat_history['reacts_count'] = chat_history['reactions'].apply(lambda x: len(x) if isinstance(x, list) else 0)
+
+    # Convert raw UTF-8 format of reactions to associated emojis
+    chat_history['reactions'] = chat_history['reactions'].apply(lambda x: extract_reactions(x) if isinstance(x, list) else x)
+
     # Create column to indicate media type
     chat_history['media_type'] = chat_history.apply(categorise_media_type, axis = 1)
 
     # Create column to indicate content type
     chat_history['content_type'] = chat_history.apply(categorise_content_type, axis = 1)
+
+    # Create column containing processed text to analyse (for simplicity consider for text messages only)
+    chat_history['processed_text'] = chat_history.apply(lambda x: process_text(x['content']) if x['media_type'] == 'Message' else np.nan)
+
+    # Create column to indicate number of emojis sent for messages only
+    chat_history['emojis_count'] = chat_history['content'].apply(lambda x: emoji.emoji_count(x) if isinstance(x, str) else 0)
     
     # Arrange dataframe in ascending order of datetime
     chat_history = chat_history.sort_values(by = 'datetime_local')
     
     return chat_history
 
+def process_text(text):
+
+    # Convert text to lower case
+    text = text.lower()
+
+    # Remove non-alphanumeric characters (punctuation, emojis etc.)
+    text = re.sub(r'[^a-zA-Z0-9\s]', '', text)
+
+    # Remove stop words 
+    text = ' '.join([word for word in text.split() if word not in stopwords])
+
+    return text
+    
 def extract_reactions(reactions):
 
-    # Check if reaction key exists for each message
-    if not isinstance(reactions, float):
-        for react in reactions:
-            emoji_char = react['reaction'].encode('latin1').decode('utf8')
-            # Update the dictionary in place with the emoji
-            react['reaction'] = emoji_char
+    # Extract reactions from each message
+    for react in reactions:
+        emoji_char = react['reaction'].encode('latin1').decode('utf8')
+
+        # Update the dictionary in place with the emoji
+        react['reaction'] = emoji_char
 
     return reactions
 
 def categorise_media_type(row):
        
-    # Assign each instance to a media type (Gifs, Sticker, Text, Image, Video, Link, Audio)
-    if not isinstance(row['audio_files'], float):
-        return "Audio"
-    elif not isinstance(row['is_unsent'], float):
+    # Assign each instance to a media type (if there are multiple media types, then the hierarchy below selects the
+    # "primary" type)
+    if isinstance(row['is_unsent'], bool):
         return "Deleted Message"
-    elif not isinstance(row['files'], float):
+    elif isinstance(row['photos'], list) or isinstance(row['videos'], list):
+        return "Photo/Video"
+    elif isinstance(row['files'], list):
         return "File Attachment"
-    elif not isinstance(row['gifs'], float):
-        return "Gif"
-    elif not isinstance(row['photos'], float):
-        return "Image"
-    elif not isinstance(row['share.link'], float) or not isinstance(row['share.share_text'], float):
+    elif isinstance(row['share.link'], str) or isinstance(row['share.share_text'], str):
         return "Shared Link"
-    elif not isinstance(row['sticker.ai_stickers'], float) or not isinstance(row['sticker.uri'], float):
+    elif isinstance(row['audio_files'], list):
+        return "Audio"
+    elif isinstance(row['gifs'], list):
+        return "Gif"
+    elif isinstance(row['sticker.ai_stickers'], list) or isinstance(row['sticker.uri'], str):
         return "Sticker"
-    elif not isinstance(row['videos'], float):
-        return "Video"
-    elif not isinstance(row['content'], str):
+    elif isinstance(row['content'], str):
         return "Text"
     else:
         return "Other"
@@ -147,7 +181,7 @@ def categorise_content_type(row):
     elif any(phrase in row['content'] for phrase in add_group):
         return "Added Member to Chat"
     elif any(phrase in row['content'] for phrase in group_chat):
-        return "GC Settings"
+        return "Chat Settings"
     elif any(phrase in row['content'] for phrase in location):
         return "Shared Location"
     elif any(phrase in row['content'] for phrase in reactions_misc):

@@ -10,6 +10,7 @@ import os
 import pandas as pd
 from raceplotly.plots import barplot
 import seaborn as sns
+from wordcloud import WordCloud
 
 
 class AnalyseChat:
@@ -23,9 +24,10 @@ class AnalyseChat:
     def summary_stats(self):
 
         # Find messages sent and reacts received aggregations
-        summary = self.msgs_only.groupby('sender_name').agg(messages_sent = ('content', 'count'), 
+        summary = self.msgs_only.groupby('sender_name').agg(messages_sent = ('timestamp_ms', 'count'), 
                                                             reacts_received = ('reacts_count', 'sum'),
-                                                            messages_with_reacts = ('reacts_count', lambda x: (x > 0).sum()))
+                                                            messages_with_reacts = ('reacts_count', lambda x: (x > 0).sum()),
+                                                            emojis_sent = ('emojis_count', 'sum'))
         
         # Find number of reacts given
         reacts_exploded = self.msgs_only.explode('reactions').dropna(subset = ['reactions'])
@@ -215,7 +217,7 @@ class AnalyseChat:
         reacted_msgs_sorted = self.msgs_only.sort_values(by = ['reacts_count', 'date', 'sender_name'], ascending = [False, False, True])
         top_reacted_msgs = reacted_msgs_sorted[['sender_name', 'content', 'reactions', 'date']].head(10)
 
-        # Find the top reacted message for each participant
+        # Find the top reacted message for each participant all-time
         top_reacted_msgs_participant = reacted_msgs_sorted.groupby('sender_name').first().reset_index()[['sender_name', 'content', 'reactions', 'date']]
         
         # Save outputs as separate sheets in Excel file
@@ -225,19 +227,46 @@ class AnalyseChat:
 
         return
 
-    def emoji_analysis(self):
-
-        pass
-
-    def conversations(self):
-        # do topic modelling here as well
-        pass
-
     def word_analysis(self):
 
+        # Get word length aggregates for messages sent by each participant
+        word_summary_participant = self.msgs_only.groupby('sender_name').agg(median_words = ('word_count', 'median'),
+                                                                             average_words = ('word_count', 'mean'),
+                                                                             max_words = ('word_count', 'max'))
+        
+        # Get word length aggregates for messages sent in chat
+        word_summary_chat = self.msgs_only.agg(median_words = ('word_count', 'median'),
+                                               average_words = ('word_count', 'mean'),
+                                               max_words = ('word_count', 'max'))
+        
+        # Conduct sentiment and emotion analysis for each particpant
+
+        # Conduct sentiment and emotion analysis for chat overall
+        
+        # Consolidate word analysis summary by appending above tables
+
+        # Build word clouds for each participant (top 100 words)
+        participants = self.msgs_only['sender_name'].unique()
+        for person in participants:
+            words = self.msgs_only[self.msgs_only['sender_name'] == person]['processed_text'].tolist()
+            words_text = ' '.join(words)
+
+            # Save plot
+
+        # Build word cloud for chat overall (top 100 words)
+
+        # Save plot
+
+        # do topic modelling here as well
+
+        pass
+        
+    @staticmethod
+    def sentiment_emotion_analysis(text):
+        #
+
         pass
 
-
-    def sentiment_emotion_analysis(self):
-
+    @staticmethod
+    def topic_modelling(text):
         pass
