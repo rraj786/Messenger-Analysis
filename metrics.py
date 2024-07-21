@@ -4,13 +4,34 @@
     Author: Rohit Rajagopal
 '''
 
+
+from collections import Counter
+import gensim
+from gensim.models import LdaModel
+from gensim.corpora import Dictionary
 import matplotlib.pyplot as plt
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
+from nltk.stem import WordNetLemmatizer
 import numpy as np
 import os
 import pandas as pd
 from raceplotly.plots import barplot
+import re
 import seaborn as sns
+from transformers import pipeline
 from wordcloud import WordCloud
+from sklearn.feature_extraction.text import CountVectorizer
+
+
+# Initialise stopwords and lemmatiser for text processing
+stopwords = stopwords.words('english')
+lemmatizer = WordNetLemmatizer()
+
+# Intialise transformers models for sentiment and emotion analysis
+sentiment_model = pipeline('text-classification', model = 'finiteautomata/bertweet-base-sentiment-analysis')
+emotion_model = pipeline('text-classification', model = 'michellejieli/emotion_text_classifier')
 
 
 class AnalyseChat:
@@ -18,8 +39,13 @@ class AnalyseChat:
     def __init__(self, chat_history, save_dir):
         self.chat_history = chat_history
         self.save_dir = save_dir
+
+        # A message is deemed to be any form of content that can receive reacts
         msgs_only_filter = ['Message', 'Shared Location']
         self.msgs_only = self.chat_history[self.chat_history['content_type'].isin(msgs_only_filter)]
+
+        # Get all unique participants in chat
+        self.participants = self.chat_history['sender_name'].unique()
 
     def summary_stats(self):
 
@@ -31,7 +57,7 @@ class AnalyseChat:
         
         # Find number of reacts given
         reacts_exploded = self.msgs_only.explode('reactions').dropna(subset = ['reactions'])
-        summary['reacts_given'] = reacts_exploded['reactions'].apply(lambda x: x['actor']).value_counts().values
+        summary['reacts_given'] = reacts_exploded['reactions'].apply(lambda x: x['actor']).value_counts()
 
         # Find ratios for reacts per message and number of messages before receiving a react
         summary['reacts_received_per_message'] = summary['reacts_received'] / summary['messages_sent']
@@ -59,8 +85,8 @@ class AnalyseChat:
         # Save output
         summary.to_csv(os.path.join(self.save_dir, 'summary.csv'), index = True)
 
-        return summary
-    
+        return 
+
     def messages_over_time(self, time_period):
         
         # Create dictionary to map time period to user-defined input
@@ -157,6 +183,41 @@ class AnalyseChat:
         # Save plot
         activity_heatmap.figure.savefig(os.path.join(chat_activity_dir, 'chat_activity_heatmap.jpg'))
 
+        # Find the top 10 most and least active days in the chat
+        activity_by_date = self.chat_history.pivot_table(index = 'date', columns = 'sender_name', values = 'timestamp_ms', aggfunc = 'count', fill_value = 0)
+        activity_by_date['total'] = activity_by_date.sum(axis = 1)
+        top_10_most_active = activity_by_date.sort_values(by = 'total', ascending = False).head(10).drop(columns = ['total'])
+        top_10_most_active.index = top_10_most_active.index.astype('category')
+        top_10_least_active = activity_by_date.sort_values(by = 'total', ascending = True).head(10).drop(columns = ['total'])
+        top_10_least_active.index = top_10_least_active.index.astype('category')
+
+        # Plot figure with subplots for most and least active dates
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize = (12, 6))
+
+        # Plot total message count
+        top_10_most_active.plot(kind = 'bar', stacked = True, ax = ax1)
+        ax1.set_title('Top 10 Most Active Dates')
+        ax1.set_xlabel('Date')
+        ax1.set_ylabel('Count of Interactions')
+        plt.xticks(rotation = 0)
+        ax1.grid(True)
+
+        # Plot participant message count
+        top_10_least_active.plot(kind = 'bar', stacked = True, ax = ax2)
+        ax2.set_title('Top 10 Most Active Dates')
+        ax2.set_xlabel('Date')
+        ax2.set_ylabel('Count of Interactions')
+        plt.xticks(rotation = 0)
+        ax2.grid(True)
+
+        fig.suptitle('Top 10 Most and Least Active Dates by Total Chat Interactions', fontsize = 16)
+        # fig.legend(title = 'Participant', fontsize = 8).get_title().set_fontsize('8')
+        plt.subplots_adjust(top = 0.5)
+        plt.tight_layout()    
+
+        # Save plot
+        fig.savefig(os.path.join(chat_activity_dir, 'most_least_activity.jpg'))
+
         return
     
     def react_analysis(self):
@@ -229,44 +290,118 @@ class AnalyseChat:
 
     def word_analysis(self):
 
-        # Get word length aggregates for messages sent by each participant
-        word_summary_participant = self.msgs_only.groupby('sender_name').agg(median_words = ('word_count', 'median'),
-                                                                             average_words = ('word_count', 'mean'),
-                                                                             max_words = ('word_count', 'max'))
-        
-        # Get word length aggregates for messages sent in chat
-        word_summary_chat = self.msgs_only.agg(median_words = ('word_count', 'median'),
+        # Add to notes in docstring, no processing was done for sentiment/emotion analysis such as removing
+        # stopwords as raw text offers better insights on what language people actually use (are they more self-centered
+        # or do they speak about everyone inclusively)
+        # Also, an example for sentiment/emotion analysis - 'I am not having a great day'
+        # If we were to remove NLTK stopwords from this, it would be 'great day' which is evidently very different
+        # to the original text and has a completely different sentiment to what was originally intended 
+        # Left emojis in as well as they affect the output of sentiment/emotion analysis
+        # Wordclouds removed stopwords, lowered text and non-alphanumeric
+        # Topic modelling removed stopwords, lowered text, non-alphanumeric and lemmatisation
+
+        # Consider text messages only for word analysis
+        texts_only = self.msgs_only[(self.msgs_only['content_type'] == 'Message') & (self.msgs_only['media_type'] == 'Text')]
+
+        # Get word length aggregates for text messages sent in chat
+        word_summary_chat = texts_only.agg(median_words = ('word_count', 'median'),
                                                average_words = ('word_count', 'mean'),
                                                max_words = ('word_count', 'max'))
         
-        # Conduct sentiment and emotion analysis for each particpant
-
-        # Conduct sentiment and emotion analysis for chat overall
+        # Get word length aggregates for text messages sent by each participant
+        word_summary_participant = texts_only.groupby('sender_name').agg(median_words = ('word_count', 'median'),
+                                                                             average_words = ('word_count', 'mean'),
+                                                                             max_words = ('word_count', 'max'))
         
-        # Consolidate word analysis summary by appending above tables
+        # Process text to normalise text, and remove stop words, emojis, and punctuation for word cloud plots
+        texts_only['processed_text'] = texts_only['content'].apply(self.process_text)
 
-        # Build word clouds for each participant (top 100 words)
-        participants = self.msgs_only['sender_name'].unique()
-        for person in participants:
-            words = self.msgs_only[self.msgs_only['sender_name'] == person]['processed_text'].tolist()
-            words_text = ' '.join(words)
+        # Build word cloud for chat overall (top 75 words)
+        most_common_chat = Counter(" ".join(texts_only['processed_text']).split()).most_common(75)
+        wordcloud_chat = WordCloud(width = 800, height = 600, background_color = 'white').generate_from_frequencies(dict(most_common_chat))
+        plt.figure(figsize = (10, 6))
+        plt.title('75 Most Common Words used in Chat')
+        plt.imshow(wordcloud_chat, interpolation = 'bilinear')
+        plt.axis('off')
+
+        # Save plot (create new directory to save output if not available already)
+        word_analysis_dir = os.path.join(self.save_dir, 'word_analysis')
+        if not os.path.exists(word_analysis_dir):
+            os.makedirs(word_analysis_dir)
+
+        plt.savefig(os.path.join(word_analysis_dir, 'wordcloud_chat.jpg'), bbox_inches = 'tight')
+        plt.close()
+
+        # Build word clouds for each participant (top 75 words)
+        for person in self.participants:
+            words_participant = texts_only[texts_only['sender_name'] == person]['processed_text']
+            most_common_participant = Counter(" ".join(words_participant).split()).most_common(75)
+            wordcloud_partcipant = WordCloud(width = 800, height = 600, background_color = 'white').generate_from_frequencies(dict(most_common_participant))
+            plt.figure(figsize = (10, 6))
+            plt.title('75 Most Common Words used by ' + person)
+            plt.imshow(wordcloud_partcipant, interpolation = 'bilinear')
+            plt.axis('off')
 
             # Save plot
+            file_name = 'wordcloud_' + person + '.jpg'
+            plt.savefig(os.path.join(word_analysis_dir, file_name), bbox_inches = 'tight')
+            plt.close()
 
-        # Build word cloud for chat overall (top 100 words)
+        # Perform sentiment analysis on each text message using pre-trained transformers model
+        # Retain the label with the highest score
+        texts_only['sentiment'] = texts_only['content'].apply(self.sentiment_analysis)
 
-        # Save plot
+        # Perform emotion analysis on each text message using pre-trained transformers model
+        # Retain the label with the highest score
+        texts_only['emotion'] = texts_only['content'].apply(self.emotion_analysis)
 
-        # do topic modelling here as well
+        proportions = texts_only.groupby(['sender_name', 'sentiment']).size().unstack(fill_value=0).apply(lambda x: x / x.sum(), axis=1)
+        proportions = proportions.reset_index().melt(id_vars='sender_name', var_name='sentiment', value_name='proportion')
 
-        pass
+        # Plot using seaborn
+        plt.figure(figsize=(10, 6))
+        sns.barplot(x='sender_name', y='proportion', hue='sentiment', data=proportions, palette='Set3')
+        plt.xlabel('Sender Name')
+        plt.ylabel('Proportion of Messages')
+        plt.title('Proportion of Sentiments by Sender')
+        plt.tight_layout()
+        plt.show()
         
+        return
+    
     @staticmethod
-    def sentiment_emotion_analysis(text):
-        #
+    def process_text(text):
 
-        pass
+        # Convert text to lower case
+        text = text.lower()
 
+        # Remove non-alphanumeric characters (punctuation, emojis etc.)
+        text = re.sub(r'[^a-zA-Z0-9\s]', '', text)
+
+        # Remove stop words 
+        text = ' '.join([word for word in text.split() if word not in stopwords])
+
+        return text
+    
     @staticmethod
-    def topic_modelling(text):
-        pass
+    def sentiment_analysis(text):
+
+        # Run model on text
+        output = sentiment_model(text, truncation = True)
+
+        # Extract relevant label
+        label = output[0]['label'].title()
+
+        return label 
+    
+    @staticmethod
+    def emotion_analysis(text):
+
+        # Run model on text
+        output = emotion_model(text, truncation = True)
+
+        # Extract relevant label
+        label = output[0]['label'].title()
+
+        return label 
+    
