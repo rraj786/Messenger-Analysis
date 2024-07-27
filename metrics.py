@@ -6,38 +6,34 @@
 
 
 from collections import Counter
-import gensim
-from gensim.models import LdaModel
-from gensim.corpora import Dictionary
 import matplotlib.pyplot as plt
 from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
-from nltk.sentiment.vader import SentimentIntensityAnalyzer
-from nltk.stem import WordNetLemmatizer
-import numpy as np
 import os
 import pandas as pd
 from raceplotly.plots import barplot
 import re
 import seaborn as sns
+from torch import cuda, device
+from tqdm import tqdm
 from transformers import pipeline
 from wordcloud import WordCloud
-from sklearn.feature_extraction.text import CountVectorizer
+from datasets import Dataset
+from transformers.pipelines.pt_utils import KeyDataset
 
 
-# Initialise stopwords and lemmatiser for text processing
-stopwords = stopwords.words('english')
-lemmatizer = WordNetLemmatizer()
+# Initialise stopwords for text processing
+stopwords = set(stopwords.words('english'))
 
-# Intialise transformers models for sentiment and emotion analysis
-sentiment_model = pipeline('text-classification', model = 'finiteautomata/bertweet-base-sentiment-analysis')
-emotion_model = pipeline('text-classification', model = 'michellejieli/emotion_text_classifier')
+# Check if GPU exists for running transformers models
+selected_device = device('cuda' if cuda.is_available() else 'cpu')
 
 
 class AnalyseChat:
 
-    def __init__(self, chat_history, save_dir):
+    def __init__(self, chat_history, batch_size, save_dir):
+
         self.chat_history = chat_history
+        self.batch_size = batch_size
         self.save_dir = save_dir
 
         # A message is deemed to be any form of content that can receive reacts
@@ -69,7 +65,7 @@ class AnalyseChat:
         media_pivot = media_type_data.pivot_table(index = 'sender_name', columns = 'media_type', values = 'timestamp_ms', aggfunc = 'count', fill_value = 0)
 
         # Find content type aggregations
-        content_filters = ['Started Call', 'Left Chat', 'Added Member to Chat', 'Shared Location']
+        content_filters = ['Started Call', 'Member Left Group', 'Added Member to Group', 'Shared Location']
         content_type_data = self.chat_history[self.chat_history['content_type'].isin(content_filters)]
         content_pivot = content_type_data.pivot_table(index = 'sender_name', columns = 'content_type', values = 'timestamp_ms', aggfunc = 'count', fill_value = 0)
 
@@ -77,7 +73,7 @@ class AnalyseChat:
         summary = pd.concat([summary, media_pivot, content_pivot], axis = 1, sort = True)
 
         # Add chat aggregates as last row
-        summary.loc[''] = pd.Series([np.nan] * len(summary.columns), index = summary.columns, name = '')
+        summary.loc[''] = pd.Series([pd.NA] * len(summary.columns), index = summary.columns, name = '')
         summary.loc['Chat Aggregate'] = summary.sum()
         summary.at['Chat Aggregate', 'reacts_received_per_message'] = summary.at['Chat Aggregate', 'reacts_received'] / summary.at['Chat Aggregate', 'messages_sent']
         summary.at['Chat Aggregate', 'messages_sent_per_react'] = summary.at['Chat Aggregate', 'messages_sent'] / summary.at['Chat Aggregate', 'messages_with_reacts']
@@ -237,7 +233,7 @@ class AnalyseChat:
         top_reactions_given = (top_reactions_given.reset_index(drop = True)
                            .set_index(top_reactions_given.groupby('actor').cumcount() + 1))
         reactions_given_participant = top_reactions_given.pivot(columns = 'actor', values = 'reaction').fillna('')
-        reactions_given_participant[''] = ''
+        reactions_given_participant[''] = pd.NA
         reactions_given_participant['Group Aggregate'] = total_count_reactions.index
 
         # Find count of each distinct react received by each participant (top 10)
@@ -247,7 +243,7 @@ class AnalyseChat:
         top_reactions_received = (top_reactions_received.reset_index(drop = True)
                            .set_index(top_reactions_received.groupby('sender_name').cumcount() + 1))
         reactions_received_participant = top_reactions_received.pivot(columns = 'sender_name', values = 'reaction').fillna('')
-        reactions_received_participant[''] = ''
+        reactions_received_participant[''] = pd.NA
         reactions_received_participant['Group Aggregate'] = total_count_reactions.index
 
         # Save outputs as separate sheets in Excel file (create new directory to save output if not available already)
@@ -317,7 +313,7 @@ class AnalyseChat:
         texts_only['processed_text'] = texts_only['content'].apply(self.process_text)
 
         # Build word cloud for chat overall (top 75 words)
-        most_common_chat = Counter(" ".join(texts_only['processed_text']).split()).most_common(75)
+        most_common_chat = Counter(' '.join(texts_only['processed_text']).split()).most_common(75)
         wordcloud_chat = WordCloud(width = 800, height = 600, background_color = 'white').generate_from_frequencies(dict(most_common_chat))
         plt.figure(figsize = (10, 6))
         plt.title('75 Most Common Words used in Chat')
@@ -335,7 +331,7 @@ class AnalyseChat:
         # Build word clouds for each participant (top 75 words)
         for person in self.participants:
             words_participant = texts_only[texts_only['sender_name'] == person]['processed_text']
-            most_common_participant = Counter(" ".join(words_participant).split()).most_common(75)
+            most_common_participant = Counter(' '.join(words_participant).split()).most_common(75)
             wordcloud_partcipant = WordCloud(width = 800, height = 600, background_color = 'white').generate_from_frequencies(dict(most_common_participant))
             plt.figure(figsize = (10, 6))
             plt.title('75 Most Common Words used by ' + person)
@@ -347,13 +343,17 @@ class AnalyseChat:
             plt.savefig(os.path.join(word_analysis_dir, file_name), bbox_inches = 'tight')
             plt.close()
 
+        # Convert column of messages to Dataset object for efficient model processing
+        data_dict = {'text': texts_only['content'].tolist()}
+        text_dataset = Dataset.from_dict(data_dict)
+
         # Perform sentiment analysis on each text message using pre-trained transformers model
         # Retain the label with the highest score
-        texts_only['sentiment'] = texts_only['content'].apply(self.sentiment_analysis)
+        texts_only['sentiment'] = self.sentiment_analysis(text_dataset, self.batch_size)
 
         # Perform emotion analysis on each text message using pre-trained transformers model
         # Retain the label with the highest score
-        texts_only['emotion'] = texts_only['content'].apply(self.emotion_analysis)
+        texts_only['emotion'] = self.emotion_analysis(text_dataset, self.batch_size)
 
         proportions = texts_only.groupby(['sender_name', 'sentiment']).size().unstack(fill_value=0).apply(lambda x: x / x.sum(), axis=1)
         proportions = proportions.reset_index().melt(id_vars='sender_name', var_name='sentiment', value_name='proportion')
@@ -384,24 +384,36 @@ class AnalyseChat:
         return text
     
     @staticmethod
-    def sentiment_analysis(text):
+    def sentiment_analysis(dataset, batch_size):
 
-        # Run model on text
-        output = sentiment_model(text, truncation = True)
+        # Intialise transformers model for sentiment analysis
+        sentiment_model = pipeline('text-classification', model = 'cardiffnlp/twitter-roberta-base-sentiment-latest', 
+                                   device = selected_device, batch_size = batch_size, truncation = True, max_length = 512)
 
-        # Extract relevant label
-        label = output[0]['label'].title()
+        # Run model
+        results = sentiment_model(KeyDataset(dataset, 'text'))
 
-        return label 
+        # Collect results and track progress
+        labels = []
+        for result in tqdm(results, position = 0, leave = True, desc = 'Sentiment Analysis'):
+            labels.append(result['label'])
+
+        return labels 
     
     @staticmethod
-    def emotion_analysis(text):
+    def emotion_analysis(dataset, batch_size):
 
-        # Run model on text
-        output = emotion_model(text, truncation = True)
+        # Intialise transformers model for emotion analysis
+        emotion_model = pipeline('text-classification', model = 'michellejieli/emotion_text_classifier', 
+                                 device = selected_device, batch_size = batch_size, truncation = True, max_length = 512)
 
-        # Extract relevant label
-        label = output[0]['label'].title()
+        # Run model
+        results = emotion_model(KeyDataset(dataset, 'text'))
 
-        return label 
+        # Collect results and track progress
+        labels = []
+        for result in tqdm(results, position = 0, leave = True, desc = 'Emotion Analysis'):
+            labels.append(result['label'])
+
+        return labels 
     

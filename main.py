@@ -31,9 +31,9 @@ if not os.path.exists(args.save_dir):
     os.makedirs(args.save_dir)
 
 # Generate metrics and save to relevant directory
-metrics = AnalyseChat(chat_history, args.save_dir)
-metrics.summary_stats()
-metrics.messages_over_time(args.cumulative_msgs_time_period)
-metrics.chat_activity(args.chat_activity_time_period)
-metrics.react_analysis()
+metrics = AnalyseChat(chat_history, 64, args.save_dir)
+# metrics.summary_stats()
+# metrics.messages_over_time(args.cumulative_msgs_time_period)
+# metrics.chat_activity(args.chat_activity_time_period)
+# metrics.react_analysis()
 metrics.word_analysis()

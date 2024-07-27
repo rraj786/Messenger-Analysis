@@ -8,6 +8,7 @@
 import emoji
 import pandas as pd
 import pytz
+import regex as re
 from tzlocal import get_localzone
 
 
@@ -26,12 +27,12 @@ def transform_data(df):
     df['day_of_week'] = pd.Categorical(df['datetime_local'].dt.day_name(), categories = day_order, ordered = True)
     df['date'] = df['datetime_local'].dt.date
     df['week'] = df['datetime_local'].dt.isocalendar().week
-    df['week_start'] = df['datetime_local'].dt.to_period('W').apply(lambda x: x.start_time).dt.date
+    df['week_start'] = df['datetime_local'].dt.to_period('W').dt.start_time
     month_order = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
     df['month'] = pd.Categorical(df['datetime_local'].dt.month_name(), categories = month_order, ordered = True)
-    df['month_start'] = df['datetime_local'].dt.to_period('M').apply(lambda x: x.start_time).dt.date
+    df['month_start'] = df['datetime_local'].dt.to_period('M').dt.start_time
     df['quarter'] = df['datetime_local'].dt.quarter
-    df['quarter_start'] = df['datetime_local'].dt.to_period('Q').apply(lambda x: x.start_time).dt.date
+    df['quarter_start'] = df['datetime_local'].dt.to_period('Q').dt.start_time
     df['year'] = df['datetime_local'].dt.year
     
     # Convert raw UTF-8 format of content string to readable format
@@ -96,21 +97,19 @@ def categorise_media_type(row):
     
 def categorise_content_type(row):
     
-    # Set up phrases to search for
-    in_call = [' joined the call.', ' joined the video call.', ' started sharing video.']
-    start_call = [' started a call.', ' started a video call.']
-    poll = [' created a poll: ', '\" in the poll.', '\" to the poll.', 'This poll is no longer available.']
-    left_group = [' left the group.']
-    add_group = [' to the group.']
-    chat = [' set your nickname to ', ' cleared the nickname for ',
-                           ' cleared your nickname ', ' set the nickname for ', ' set her own nickname to ',
-                           ' set his own nickname to ', ' set the quick reaction to ', ' changed the theme to ',
-                           ' as the word effect for ', ' pinned a message.', ' named the group ', ' changed the group photo.',
-                           ' turned off member approval. Anyone with the link can join the group.']
-    location = [' sent a live location.']
-    reactions_misc = [' to your message ']
-    
-    # Assign messages to content types
+    # Set up phrases to search for and compile regex patterns
+    patterns = {
+        'In Call Settings': re.compile(r' joined the call\.| joined the video call\.| started sharing video\.'),
+        'Started Call': re.compile(r' started a call\.| started a video call\.'),
+        'Poll Settings': re.compile(r' created a poll: | voted for [\w\W]*? in the poll\.| added [\w\W]*? to the poll\.|This poll is no longer available\.'),
+        'Member Left Group': re.compile(r' left the group\.'),
+        'Added Member to Group': re.compile(r' added [\w\W]*? to the group\.'),
+        'Chat Settings': re.compile(r' set your nickname to | cleared the nickname for | cleared your nickname | set the nickname for | set her own nickname to | set his own nickname to | set the quick reaction to | changed the theme to | as the word effect for | pinned a message\.| named the group | changed the group photo\.| turned off member approval\. Anyone with the link can join the group\.'),
+        'Shared Location': re.compile(r' sent a live location\.'),
+        'React Notification': re.compile(r'reacted\s[\p{So}]\s*to your message', re.UNICODE)
+    }
+
+    # Check media type first
     if not isinstance(row['content'], str):
         if row['media_type'] == 'Other':
             return 'NA'
@@ -118,21 +117,11 @@ def categorise_content_type(row):
             return row['media_type']
         else:
             return 'Message'
-    elif any(phrase in row['content'] for phrase in in_call):
-        return 'In Call Settings'
-    elif any(phrase in row['content'] for phrase in start_call):
-        return 'Started Call'
-    elif any(phrase in row['content'] for phrase in poll):
-        return 'Poll Settings'
-    elif any(phrase in row['content'] for phrase in left_group):
-        return 'Member Left Group'
-    elif any(phrase in row['content'] for phrase in add_group):
-        return 'Added Member to Group'
-    elif any(phrase in row['content'] for phrase in chat):
-        return 'Chat Settings'
-    elif any(phrase in row['content'] for phrase in location):
-        return 'Shared Location'
-    elif any(phrase in row['content'] for phrase in reactions_misc):
-        return 'React Notification'
-    else:
-        return 'Message'
+    
+    # Check for other patterns
+    for content_type, pattern in patterns.items():
+        if pattern.search(row['content']):
+            return content_type
+
+    # Default case
+    return 'Message'
