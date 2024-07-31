@@ -35,11 +35,14 @@ def process_json(directory):
                 
                 # Append messages on to each other
                 messages += data['messages']
-                
+
+    # Extract group name
+    group_name = data['title']
+
     # Normalise messages into dataframe
     normalised_messages = pd.json_normalize(messages)
     
     # Transform dataframe and apply feature engineering to generate useful columns
     chat_history = transform_data(normalised_messages)
 
-    return chat_history
+    return group_name, chat_history

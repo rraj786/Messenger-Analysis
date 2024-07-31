@@ -114,7 +114,7 @@ def categorise_content_type(row):
         if row['media_type'] == 'Other':
             return 'NA'
         elif row['media_type'] == 'Deleted Message':
-            return row['media_type']
+            return 'Deleted Message'
         else:
             return 'Message'
     

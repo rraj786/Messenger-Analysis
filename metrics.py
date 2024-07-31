@@ -32,7 +32,8 @@ class AnalyseChat:
 
     def __init__(self, chat_history, batch_size, save_dir):
 
-        self.chat_history = chat_history
+        # Remove any react notifications as these are only relevant to the participant that downloaded the messages
+        self.chat_history = chat_history[chat_history['content_type'] != 'React Notification']
         self.batch_size = batch_size
         self.save_dir = save_dir
 
@@ -40,9 +41,51 @@ class AnalyseChat:
         msgs_only_filter = ['Message', 'Shared Location']
         self.msgs_only = self.chat_history[self.chat_history['content_type'].isin(msgs_only_filter)]
 
+        # Extract text messages for word analysis
+        self.texts_only = self.msgs_only[(self.msgs_only['content_type'] == 'Message') & (self.msgs_only['media_type'] == 'Text')]
+
         # Get all unique participants in chat
         self.participants = self.chat_history['sender_name'].unique()
 
+    def headline_stats(self):
+
+        multimedia_filters = ['Photo/Video', 'File Attachment', 'Shared Link', 'Audio', 'Gif', 'Sticker']
+
+        # Find number of participants
+        no_participants = len(self.participants)
+
+        # Find total chat interactions and messages sent
+        totals = (len(self.chat_history), len(self.msgs_only))
+
+        # Find average contributions per day
+        avg_contributions = round(self.chat_history.groupby('date').size().mean(), 2)
+
+        # Find average delay in minutes between contributions
+        avg_delay = round((self.chat_history['datetime_local'].diff().dt.total_seconds() / 60).mean(), 2)
+
+        # Find most active member in chat
+        participant_contributions = self.chat_history.groupby('sender_name').size()
+        most_active_participant = (participant_contributions.idxmax(), participant_contributions.max())
+
+        # Find number of reactions given
+        reactions = self.chat_history['reacts_count'].sum()
+
+        # Find most active period in a week
+        hour_day_contributions = self.chat_history.groupby(['hour_of_day', 'day_of_week']).size()
+        most_active_time = hour_day_contributions.idxmax()
+
+        # Find average text message length in words
+        avg_words = round(self.texts_only['word_count'].mean(), 2)
+
+        # Find total multimedia messages sent
+        multimedia = len(self.chat_history[self.chat_history['media_type'].isin(multimedia_filters)])
+
+        # Combine outputs
+        aggs = [no_participants, totals, avg_contributions, avg_delay, most_active_participant, reactions, most_active_time,
+                avg_words, multimedia]
+        
+        return aggs
+    
     def summary_stats(self):
 
         # Find messages sent and reacts received aggregations
@@ -296,24 +339,21 @@ class AnalyseChat:
         # Wordclouds removed stopwords, lowered text and non-alphanumeric
         # Topic modelling removed stopwords, lowered text, non-alphanumeric and lemmatisation
 
-        # Consider text messages only for word analysis
-        texts_only = self.msgs_only[(self.msgs_only['content_type'] == 'Message') & (self.msgs_only['media_type'] == 'Text')]
-
         # Get word length aggregates for text messages sent in chat
-        word_summary_chat = texts_only.agg(median_words = ('word_count', 'median'),
+        word_summary_chat = self.texts_only.agg(median_words = ('word_count', 'median'),
                                                average_words = ('word_count', 'mean'),
                                                max_words = ('word_count', 'max'))
         
         # Get word length aggregates for text messages sent by each participant
-        word_summary_participant = texts_only.groupby('sender_name').agg(median_words = ('word_count', 'median'),
+        word_summary_participant = self.texts_only.groupby('sender_name').agg(median_words = ('word_count', 'median'),
                                                                              average_words = ('word_count', 'mean'),
                                                                              max_words = ('word_count', 'max'))
         
         # Process text to normalise text, and remove stop words, emojis, and punctuation for word cloud plots
-        texts_only['processed_text'] = texts_only['content'].apply(self.process_text)
+        self.texts_only['processed_text'] = self.texts_only['content'].apply(self.process_text)
 
         # Build word cloud for chat overall (top 75 words)
-        most_common_chat = Counter(' '.join(texts_only['processed_text']).split()).most_common(75)
+        most_common_chat = Counter(' '.join(self.texts_only['processed_text']).split()).most_common(75)
         wordcloud_chat = WordCloud(width = 800, height = 600, background_color = 'white').generate_from_frequencies(dict(most_common_chat))
         plt.figure(figsize = (10, 6))
         plt.title('75 Most Common Words used in Chat')
@@ -330,7 +370,7 @@ class AnalyseChat:
 
         # Build word clouds for each participant (top 75 words)
         for person in self.participants:
-            words_participant = texts_only[texts_only['sender_name'] == person]['processed_text']
+            words_participant = self.texts_only[self.texts_only['sender_name'] == person]['processed_text']
             most_common_participant = Counter(' '.join(words_participant).split()).most_common(75)
             wordcloud_partcipant = WordCloud(width = 800, height = 600, background_color = 'white').generate_from_frequencies(dict(most_common_participant))
             plt.figure(figsize = (10, 6))
@@ -344,18 +384,18 @@ class AnalyseChat:
             plt.close()
 
         # Convert column of messages to Dataset object for efficient model processing
-        data_dict = {'text': texts_only['content'].tolist()}
+        data_dict = {'text': self.texts_only['content'].tolist()}
         text_dataset = Dataset.from_dict(data_dict)
 
         # Perform sentiment analysis on each text message using pre-trained transformers model
         # Retain the label with the highest score
-        texts_only['sentiment'] = self.sentiment_analysis(text_dataset, self.batch_size)
+        self.texts_only['sentiment'] = self.sentiment_analysis(text_dataset, self.batch_size)
 
         # Perform emotion analysis on each text message using pre-trained transformers model
         # Retain the label with the highest score
-        texts_only['emotion'] = self.emotion_analysis(text_dataset, self.batch_size)
+        self.texts_only['emotion'] = self.emotion_analysis(text_dataset, self.batch_size)
 
-        proportions = texts_only.groupby(['sender_name', 'sentiment']).size().unstack(fill_value=0).apply(lambda x: x / x.sum(), axis=1)
+        proportions = self.texts_only.groupby(['sender_name', 'sentiment']).size().unstack(fill_value=0).apply(lambda x: x / x.sum(), axis=1)
         proportions = proportions.reset_index().melt(id_vars='sender_name', var_name='sentiment', value_name='proportion')
 
         # Plot using seaborn
@@ -395,7 +435,7 @@ class AnalyseChat:
 
         # Collect results and track progress
         labels = []
-        for result in tqdm(results, position = 0, leave = True, desc = 'Sentiment Analysis'):
+        for result in tqdm(results, total = len(dataset), position = 0, leave = True, desc = 'Sentiment Analysis'):
             labels.append(result['label'])
 
         return labels 
@@ -412,7 +452,7 @@ class AnalyseChat:
 
         # Collect results and track progress
         labels = []
-        for result in tqdm(results, position = 0, leave = True, desc = 'Emotion Analysis'):
+        for result in tqdm(results, total = len(dataset), position = 0, leave = True, desc = 'Emotion Analysis'):
             labels.append(result['label'])
 
         return labels 
