@@ -6,6 +6,7 @@
 
 
 from collections import Counter
+from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 from nltk.corpus import stopwords
 import os
@@ -57,11 +58,11 @@ class AnalyseChat:
         # Find total chat interactions and messages sent
         totals = (len(self.chat_history), len(self.msgs_only))
 
-        # Find average contributions per day
-        avg_contributions = round(self.chat_history.groupby('date').size().mean(), 2)
+        # Find average messages sent per day
+        avg_contributions = round(self.msgs_only.groupby('date').size().mean(), 2)
 
         # Find average delay in minutes between contributions
-        avg_delay = round((self.chat_history['datetime_local'].diff().dt.total_seconds() / 60).mean(), 2)
+        avg_delay = str(round((self.chat_history['datetime_local'].diff().dt.total_seconds() / 60).mean(), 2)) + ' minutes'
 
         # Find most active member in chat
         participant_contributions = self.chat_history.groupby('sender_name').size()
@@ -72,7 +73,12 @@ class AnalyseChat:
 
         # Find most active period in a week
         hour_day_contributions = self.chat_history.groupby(['hour_of_day', 'day_of_week']).size()
-        most_active_time = hour_day_contributions.idxmax()
+        time_id = hour_day_contributions.idxmax()
+        start_time = datetime.strptime(f"{time_id[0]:02d}:00", "%H:%M")
+        end_time = start_time + timedelta(hours = 1)
+        start_time_str = start_time.strftime('%I:%M%p').lstrip('0')
+        end_time_str = end_time.strftime('%I:%M%p').lstrip('0')
+        most_active_time = time_id[1] + ' ' + start_time_str + ' to ' + end_time_str
 
         # Find average text message length in words
         avg_words = round(self.texts_only['word_count'].mean(), 2)
@@ -91,16 +97,18 @@ class AnalyseChat:
         # Find messages sent and reacts received aggregations
         summary = self.msgs_only.groupby('sender_name').agg(messages_sent = ('timestamp_ms', 'count'), 
                                                             reacts_received = ('reacts_count', 'sum'),
-                                                            messages_with_reacts = ('reacts_count', lambda x: (x > 0).sum()),
-                                                            emojis_sent = ('emojis_count', 'sum'))
+                                                            messages_with_reacts = ('reacts_count', lambda x: (x > 0).sum()))
         
+        # Find number of emojis sent
+        summary['Emojis Sent'] = self.texts_only.groupby('sender_name').agg(emojis_sent = ('emojis_count', 'sum'))
+
         # Find number of reacts given
         reacts_exploded = self.msgs_only.explode('reactions').dropna(subset = ['reactions'])
-        summary['reacts_given'] = reacts_exploded['reactions'].apply(lambda x: x['actor']).value_counts()
+        summary['Reacts Given'] = reacts_exploded['reactions'].apply(lambda x: x['actor']).value_counts()
 
         # Find ratios for reacts per message and number of messages before receiving a react
-        summary['reacts_received_per_message'] = summary['reacts_received'] / summary['messages_sent']
-        summary['messages_sent_per_react'] = summary['messages_sent'] / summary['messages_with_reacts']
+        summary['Reacts Received per Message'] = summary['reacts_received'] / summary['messages_sent']
+        summary['Messages Sent per React'] = summary['messages_sent'] / summary['messages_with_reacts']
 
         # Find media type aggregations
         media_filters = ['Other', 'Text']
@@ -116,25 +124,75 @@ class AnalyseChat:
         summary = pd.concat([summary, media_pivot, content_pivot], axis = 1, sort = True)
 
         # Add chat aggregates as last row
-        summary.loc[''] = pd.Series([pd.NA] * len(summary.columns), index = summary.columns, name = '')
         summary.loc['Chat Aggregate'] = summary.sum()
-        summary.at['Chat Aggregate', 'reacts_received_per_message'] = summary.at['Chat Aggregate', 'reacts_received'] / summary.at['Chat Aggregate', 'messages_sent']
-        summary.at['Chat Aggregate', 'messages_sent_per_react'] = summary.at['Chat Aggregate', 'messages_sent'] / summary.at['Chat Aggregate', 'messages_with_reacts']
+        summary.at['Chat Aggregate', 'Reacts Received per Message'] = summary.at['Chat Aggregate', 'reacts_received'] / summary.at['Chat Aggregate', 'messages_sent']
+        summary.at['Chat Aggregate', 'Messages Sent per React'] = summary.at['Chat Aggregate', 'messages_sent'] / summary.at['Chat Aggregate', 'messages_with_reacts']
 
-        # Save output
-        summary.to_csv(os.path.join(self.save_dir, 'summary.csv'), index = True)
+        # Rename columns for consistency
+        summary = summary.rename_axis('Participant')
+        summary = summary.rename(columns = {'messages_sent': 'Messages Sent', 'reacts_received': 'Reacts Received', 'messages_with_reacts': 'Messages that Received Reacts'})
 
-        return 
+        # Add colour palette to distinguish between each participant
+        summary['palette'] = sns.color_palette('pastel', len(summary.index))
 
-    def messages_over_time(self, time_period):
+        # Create subplots to display summarised stats from chat
+        # Plot 1 (pie chart)
+        fig, axs = plt.subplots(2, 2, figsize = (10, 10))
+        axs[0, 0].pie(summary['Messages Sent'][:-1], labels = summary.index[:-1], autopct='%1.0f%%', colors = summary['palette'][:-1])
+        axs[0, 0].set_title('Breakdown of Messages Sent')
+
+        # Plot 2 (bar plot)
+        # Extract chat aggregate value to plot
+        chat_aggregate_value = summary.loc['Chat Aggregate', 'Reacts Received per Message']
+
+        # Filter out chat aggregate and sort table
+        reacts_data = summary.drop('Chat Aggregate').sort_values(by = 'Reacts Received per Message', ascending = False)
+
+        # Plot chart and horizontal line for chat aggregate
+        sns.barplot(x = reacts_data.index, y = reacts_data['Reacts Received per Message'], palette = reacts_data['palette'].tolist(), ax = axs[0, 1])
+        axs[0, 1].axhline(y = chat_aggregate_value, color = 'grey', linestyle = '--', label = 'Chat Aggregate')
+        axs[0, 1].set_title('Reacts Received per Message')
+        axs[0, 1].set_xlabel('Participant')
+        axs[0, 1].set_ylabel('Reacts Received per Message')
+        for label in axs[0, 1].containers:
+            axs[0, 1].bar_label(label, padding = 3)
+
+        axs[0, 1].legend()
+
+        # Plot 3 (horizontal bar plot)
+        # Filter out chat aggregate and sort table
+        emojis_data = summary.drop('Chat Aggregate').sort_values(by = 'Emojis Sent', ascending = False)
+
+        # Plot chart
+        sns.barplot(x = emojis_data['Emojis Sent'], y = emojis_data.index, palette = emojis_data['palette'].tolist(), ax = axs[1, 0])
+        axs[1, 0].set_title('Emojis Sent')
+        axs[1, 0].set_xlabel('Emojis Sent')
+        axs[1, 0].set_ylabel('Participants')
+        for label in axs[1, 0].containers:
+            axs[1, 0].bar_label(label, padding = 3)
+
+        # Plot 4 (line chart)
+        # Filter for calls only
+        calls_data = self.chat_history[self.chat_history['content_type'] == 'Started Call'].groupby('month_start').size()
+    
+        # Plot chart
+        calls_data.plot(kind = 'line', marker = 'x', ax = axs[1, 1])
+        axs[1, 1].set_title('Calls over Time (by Month)')
+        axs[1, 1].set_xlabel('Month')
+        axs[1, 1].set_ylabel('Number of Calls')
+
+        plt.tight_layout()
+
+        # Drop colour_palette column as it is no longer needed
+        summary = summary.drop('palette', axis = 1)
+
+        return summary, fig
+
+    def cumulative_messages_over_time(self):
         
-        # Create dictionary to map time period to user-defined input
-        plot_period = {'date':'date', 'week':'week_start', 'month':'month_start', 'quarter':'quarter_start', 'year':'year'} 
-
-        # Find cumulative count of messages sent by each participant for the user-defined time period
-        frequency = plot_period[time_period]
+        # Find cumulative count of messages sent by each participant by each date
         self.msgs_only['cumulative_count_msgs'] = self.msgs_only.groupby('sender_name').cumcount() + 1
-        pivot_msg_counts = self.msgs_only.pivot_table(index = frequency, columns = 'sender_name', values = 'cumulative_count_msgs', aggfunc = 'last')
+        pivot_msg_counts = self.msgs_only.pivot_table(index = 'date', columns = 'sender_name', values = 'cumulative_count_msgs', aggfunc = 'last')
         pivot_msg_counts.fillna(method = 'ffill', inplace = True)
 
         # Find total messages sent over time for the user-defined time period
@@ -142,7 +200,7 @@ class AnalyseChat:
 
         # Unstack pivot table 
         cum_msg_counts = pivot_msg_counts.stack().reset_index()
-        cum_msg_counts.columns = [frequency, 'sender_name', 'cumulative_count_msgs']
+        cum_msg_counts.columns = ['date', 'sender_name', 'cumulative_count_msgs']
 
         # Plot figure with subplots for total cumulative message count and pivot table data for each participant
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize = (12, 6), gridspec_kw = {'height_ratios': [1, 2]})
@@ -150,39 +208,76 @@ class AnalyseChat:
         # Plot total message count
         total_msgs_over_time.plot(kind = 'line', linewidth = 1.5, ax = ax1)
         ax1.set_title('Total Message Count')
-        ax1.set_xlabel(time_period.title())
+        ax1.set_xlabel('Date')
         ax1.set_ylabel('Cumulative Count')
         ax1.grid(True)
 
         # Plot participant message count
         pivot_msg_counts.plot(kind = 'line', linewidth = 1.5, ax = ax2)
         ax2.set_title('Message Count by Participant')
-        ax2.set_xlabel(time_period.title())
+        ax2.set_xlabel('Date')
         ax2.set_ylabel('Cumulative Count')
         ax2.legend(title = 'Participant', loc = 'best', fontsize = 8).get_title().set_fontsize('8')
         ax2.grid(True)
 
-        fig.suptitle('Cumulative Count of Messages Sent Over Time (by ' + time_period.title() + ')', fontsize = 16)
+        fig.suptitle('Cumulative Count of Messages Sent Over Time', fontsize = 16)
         plt.subplots_adjust(top = 0.5)
         plt.tight_layout()
 
-        # Save plot (create new directory to save output if not available already)
-        msg_count_dir = os.path.join(self.save_dir, 'message_counts')
-        if not os.path.exists(msg_count_dir):
-            os.makedirs(msg_count_dir)
+        # Create racecar plot to dynamically visualise changes in cumulative count of messages (only by week as it captures changes well)
+        racecar = barplot(cum_msg_counts, item_column = 'sender_name', value_column = 'cumulative_count_msgs', time_column = 'week_start', top_entries = 10)
+        racecar_output = racecar.plot(title = 'Cumulative Count of Messages Sent Over Time (by Week)', 
+            item_label = 'Participant', value_label = 'Cumulative Count', frame_duration = 250)
 
-        fig.savefig(os.path.join(msg_count_dir, 'cumulative_message_count.jpg'))
+        return fig, racecar_output
 
-        # Create racecar plot to dynamically visualise changes in cumulative count of messages
-        racecar = barplot(cum_msg_counts, item_column = 'sender_name', value_column = 'cumulative_count_msgs', time_column = frequency, top_entries = 10)
-        output = racecar.plot(title = 'Cumulative Count of Messages Sent Over Time (by ' + time_period.title() + ')', 
-                     item_label = 'Participant', value_label = 'Cumulative Count', frame_duration = 250)
+    def raw_messages_over_time(self):
 
-        # Save plot 
-        output.write_html(os.path.join(msg_count_dir, 'cumulative_racecar_count.html'))
+        # Create list of time periods to consider
+        plot_periods = ['date', 'week_start', 'month_start', 'quarter_start', 'year']
+        
+        # Find cumulative count of messages sent by each participant for the user-defined time period
+        plots = []
+        for period in plot_periods:
+            clean_period = period.split('_')[0]
+            self.msgs_only['cumulative_count_msgs'] = self.msgs_only.groupby('sender_name').cumcount() + 1
+            pivot_msg_counts = self.msgs_only.pivot_table(index = period, columns = 'sender_name', values = 'cumulative_count_msgs', aggfunc = 'last')
+            pivot_msg_counts.fillna(method = 'ffill', inplace = True)
 
-        return
+            # Find total messages sent over time for the user-defined time period
+            total_msgs_over_time = pivot_msg_counts.sum(axis = 1)
 
+            # Unstack pivot table 
+            cum_msg_counts = pivot_msg_counts.stack().reset_index()
+            cum_msg_counts.columns = [period, 'sender_name', 'cumulative_count_msgs']
+
+            # Plot figure with subplots for total cumulative message count and pivot table data for each participant
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize = (12, 6), gridspec_kw = {'height_ratios': [1, 2]})
+
+            # Plot total message count
+            total_msgs_over_time.plot(kind = 'line', linewidth = 1.5, ax = ax1)
+            ax1.set_title('Total Message Count')
+            ax1.set_xlabel(clean_period.title())
+            ax1.set_ylabel('Cumulative Count')
+            ax1.grid(True)
+
+            # Plot participant message count
+            pivot_msg_counts.plot(kind = 'line', linewidth = 1.5, ax = ax2)
+            ax2.set_title('Message Count by Participant')
+            ax2.set_xlabel(clean_period.title())
+            ax2.set_ylabel('Cumulative Count')
+            ax2.legend(title = 'Participant', loc = 'best', fontsize = 8).get_title().set_fontsize('8')
+            ax2.grid(True)
+
+            fig.suptitle('Cumulative Count of Messages Sent Over Time (by ' + clean_period.title() + ')', fontsize = 16)
+            plt.subplots_adjust(top = 0.5)
+            plt.tight_layout()
+
+            # Append plot to list of plots
+            plots.append(fig)
+        
+        return plots
+    
     def chat_activity(self, time_period):
 
         # Create dictionary to map time period to user-defined input

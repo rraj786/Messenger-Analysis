@@ -63,6 +63,7 @@ def generate_report(args, group_name, chat_history):
     end = chat_history['datetime_utc'].max().strftime('%d/%m/%Y %I:%M%p')
     st.markdown(f'<div class="caption">Chat history between {start} and {end} UTC</div>', unsafe_allow_html = True)
 
+    # Section 1
     # Display headline stats as cards across two rows
     st.markdown(f'<div class="subheader">Headline Statistics', unsafe_allow_html = True)
     aggs = metrics.headline_stats()
@@ -90,30 +91,38 @@ def generate_report(args, group_name, chat_history):
     with col10:
         create_card('Mean Words per Message', '{:,}'.format(aggs[7]))
 
+    # Section 2
     # Display summary plots
     st.markdown(f'<div class="subheader">Summary', unsafe_allow_html = True)
-
-    # Display summary table under expanded tab
     summary, fig = metrics.summary_stats()
+    st.pyplot(fig)
+    
+    # Display summary table under expanded tab 
     with st.expander('Expand to view full Summary Breakdown'):
 
         # Highlight totals row
         summary_styled = summary.style.apply(lambda x: ['background-color: yellow' if x.name == 'Chat Aggregate' else '' for _ in x], axis = 1)
         st.write(summary_styled, unsafe_allow_html = True)
 
-    # Display messages over time
+    # Section 3
+    # Display cumulative messages over time
     st.markdown(f'<div class="subheader">Messages Sent over Time', unsafe_allow_html = True)
-    plots, racecar_output = metrics.cumulative_messages_over_time()
-
-    # Create radio buttons to select time period
-    time_period = st.radio('Select a Time Period for Cumulative Plots below', ['Date', 'Week', 'Month', 'Quarter', 'Year'])
-
-    # Select plot to display
-    options_map = {'Date': 0, 'Week': 1, 'Month': 2, 'Quarter': 3, 'Year': 4}
-    st.pyplot(plots[options_map[time_period]])
+    fig, racecar_output = metrics.cumulative_messages_over_time()
+    st.pyplot(fig)
 
     # Display racecar output
     st.plotly_chart(racecar_output)
+
+    # Create radio buttons to select time period
+    time_period = st.radio('Select a Time Period for Plots below', ['Date', 'Week', 'Month', 'Quarter', 'Year'])
+    options_map = {'Date': 0, 'Week': 1, 'Month': 2, 'Quarter': 3, 'Year': 4}
+
+    # Display raw messages over time
+    plots = metrics.raw_messages_over_time()
+    st.pyplot(plots[options_map[time_period]])
+
+
+
 
     # metrics.messages_over_time(args.cumulative_msgs_time_period)
     # metrics.chat_activity(args.chat_activity_time_period)
