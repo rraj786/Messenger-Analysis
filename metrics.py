@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from nltk.corpus import stopwords
 import os
 import pandas as pd
+import plotly.express as px
 from raceplotly.plots import barplot
 import re
 import seaborn as sns
@@ -203,7 +204,7 @@ class AnalyseChat:
         cum_msg_counts.columns = ['date', 'sender_name', 'cumulative_count_msgs']
 
         # Plot figure with subplots for total cumulative message count and pivot table data for each participant
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize = (12, 6), gridspec_kw = {'height_ratios': [1, 2]})
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize = (12, 8), gridspec_kw = {'height_ratios': [1, 2]})
 
         # Plot total message count
         total_msgs_over_time.plot(kind = 'line', linewidth = 1.5, ax = ax1)
@@ -220,63 +221,51 @@ class AnalyseChat:
         ax2.legend(title = 'Participant', loc = 'best', fontsize = 8).get_title().set_fontsize('8')
         ax2.grid(True)
 
-        fig.suptitle('Cumulative Count of Messages Sent Over Time', fontsize = 16)
+        fig.suptitle('Cumulative Count of Messages Sent', fontsize = 16)
         plt.subplots_adjust(top = 0.5)
         plt.tight_layout()
 
-        # Create racecar plot to dynamically visualise changes in cumulative count of messages (only by week as it captures changes well)
-        racecar = barplot(cum_msg_counts, item_column = 'sender_name', value_column = 'cumulative_count_msgs', time_column = 'week_start', top_entries = 10)
-        racecar_output = racecar.plot(title = 'Cumulative Count of Messages Sent Over Time (by Week)', 
-            item_label = 'Participant', value_label = 'Cumulative Count', frame_duration = 250)
+        # Create racecar plot to dynamically visualise changes in cumulative count of messages
+        racecar = barplot(cum_msg_counts, item_column = 'sender_name', value_column = 'cumulative_count_msgs', time_column = 'date', top_entries = 10)
+        racecar_output = racecar.plot(title = 'Cumulative Count of Messages Sent', item_label = 'Participant', value_label = 'Cumulative Count', 
+                                      frame_duration = 75)
 
         return fig, racecar_output
 
     def raw_messages_over_time(self):
 
-        # Create list of time periods to consider
-        plot_periods = ['date', 'week_start', 'month_start', 'quarter_start', 'year']
+        # Find count of messages sent by each participant per week only (captures low-level changes well without being too granular)]
+        pivot_msg_counts = self.msgs_only.pivot_table(index = 'week_start', columns = 'sender_name', values = 'timestamp_ms', aggfunc = 'count')
+        pivot_msg_counts = pivot_msg_counts.fillna(0)
         
-        # Find cumulative count of messages sent by each participant for the user-defined time period
-        plots = []
-        for period in plot_periods:
-            clean_period = period.split('_')[0]
-            self.msgs_only['cumulative_count_msgs'] = self.msgs_only.groupby('sender_name').cumcount() + 1
-            pivot_msg_counts = self.msgs_only.pivot_table(index = period, columns = 'sender_name', values = 'cumulative_count_msgs', aggfunc = 'last')
-            pivot_msg_counts.fillna(method = 'ffill', inplace = True)
+        # Find total messages sent per period
+        pivot_msg_counts['Chat Aggregate'] = pivot_msg_counts.sum(axis = 1)
 
-            # Find total messages sent over time for the user-defined time period
-            total_msgs_over_time = pivot_msg_counts.sum(axis = 1)
+        # Unstack pivot table 
+        raw_msg_counts = pivot_msg_counts.stack().reset_index()
+        raw_msg_counts.columns = ['Week', 'Participant', 'Message Count']
 
-            # Unstack pivot table 
-            cum_msg_counts = pivot_msg_counts.stack().reset_index()
-            cum_msg_counts.columns = [period, 'sender_name', 'cumulative_count_msgs']
+        # Create an interactive plot to select what lines to display
+        fig = px.line(raw_msg_counts, x = 'Week', y = 'Message Count', color = 'Participant', title = 'Raw Message Counts by Week', 
+                        color_discrete_sequence = px.colors.qualitative.Plotly)
 
-            # Plot figure with subplots for total cumulative message count and pivot table data for each participant
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize = (12, 6), gridspec_kw = {'height_ratios': [1, 2]})
-
-            # Plot total message count
-            total_msgs_over_time.plot(kind = 'line', linewidth = 1.5, ax = ax1)
-            ax1.set_title('Total Message Count')
-            ax1.set_xlabel(clean_period.title())
-            ax1.set_ylabel('Cumulative Count')
-            ax1.grid(True)
-
-            # Plot participant message count
-            pivot_msg_counts.plot(kind = 'line', linewidth = 1.5, ax = ax2)
-            ax2.set_title('Message Count by Participant')
-            ax2.set_xlabel(clean_period.title())
-            ax2.set_ylabel('Cumulative Count')
-            ax2.legend(title = 'Participant', loc = 'best', fontsize = 8).get_title().set_fontsize('8')
-            ax2.grid(True)
-
-            fig.suptitle('Cumulative Count of Messages Sent Over Time (by ' + clean_period.title() + ')', fontsize = 16)
-            plt.subplots_adjust(top = 0.5)
-            plt.tight_layout()
-
-            # Append plot to list of plots
-            plots.append(fig)
+        # Add button to show all lines
+        fig.update_layout(
+            updatemenus = [
+                dict(
+                    type = "buttons",
+                    x = 1.1,
+                    y = 1.25,
+                    buttons = [
+                        dict(label = "Show All",
+                            method = "update",
+                            args=[{"visible": [True] * len(raw_msg_counts['Participant'].unique())}])
+                    ]
+                )
+            ]
+        )
         
-        return plots
+        return fig
     
     def chat_activity(self, time_period):
 

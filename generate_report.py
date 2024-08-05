@@ -31,7 +31,7 @@ def generate_report(args, group_name, chat_history):
             font-weight: bold;
         }
         .subheader {
-            font-size: 32px;
+            font-size: 28px;
             text-align: center;
             margin-top: 25px;
             margin-bottom: 25px;
@@ -113,13 +113,9 @@ def generate_report(args, group_name, chat_history):
     # Display racecar output
     st.plotly_chart(racecar_output)
 
-    # Create radio buttons to select time period
-    time_period = st.radio('Select a Time Period for Plots below', ['Date', 'Week', 'Month', 'Quarter', 'Year'])
-    options_map = {'Date': 0, 'Week': 1, 'Month': 2, 'Quarter': 3, 'Year': 4}
-
     # Display raw messages over time
-    plots = metrics.raw_messages_over_time()
-    st.pyplot(plots[options_map[time_period]])
+    fig = metrics.raw_messages_over_time()
+    st.plotly_chart(fig)
 
 
 
@@ -131,6 +127,7 @@ def generate_report(args, group_name, chat_history):
 
 def create_card(title, content):
 
+    # Create container to house metric
     with st.container():
         st.write(f'**{title}**')
         st.write(content)
