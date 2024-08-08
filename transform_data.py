@@ -22,7 +22,10 @@ def transform_data(df):
     df['datetime_local'] = df['datetime_utc'].dt.tz_localize(pytz.utc).dt.tz_convert(target)
     
     # Create columns for relative time periods
-    df['hour_of_day'] = df['datetime_local'].dt.hour
+    hour_order = ['12:00AM', '01:00AM', '02:00AM', '03:00AM', '04:00AM', '05:00AM', '06:00AM', '07:00AM', '08:00AM', '09:00AM', '10:00AM', 
+                  '11:00AM', '12:00PM', '01:00PM', '02:00PM', '03:00PM', '04:00PM', '05:00PM', '06:00PM', '07:00PM', '08:00PM', '09:00PM', 
+                  '10:00PM', '11:00PM']
+    df['hour_of_day'] = pd.Categorical(df['datetime_local'].dt.strftime('%I:00%p'), categories = hour_order, ordered = True)
     day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     df['day_of_week'] = pd.Categorical(df['datetime_local'].dt.day_name(), categories = day_order, ordered = True)
     df['date'] = df['datetime_local'].dt.date

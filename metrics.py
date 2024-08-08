@@ -12,6 +12,8 @@ from nltk.corpus import stopwords
 import os
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from raceplotly.plots import barplot
 import re
 import seaborn as sns
@@ -75,11 +77,9 @@ class AnalyseChat:
         # Find most active period in a week
         hour_day_contributions = self.chat_history.groupby(['hour_of_day', 'day_of_week']).size()
         time_id = hour_day_contributions.idxmax()
-        start_time = datetime.strptime(f"{time_id[0]:02d}:00", "%H:%M")
-        end_time = start_time + timedelta(hours = 1)
-        start_time_str = start_time.strftime('%I:%M%p').lstrip('0')
+        end_time = datetime.strptime(time_id[0], '%I:%M%p') + timedelta(hours = 1)
         end_time_str = end_time.strftime('%I:%M%p').lstrip('0')
-        most_active_time = time_id[1] + ' ' + start_time_str + ' to ' + end_time_str
+        most_active_time = time_id[1] + ' ' + time_id[0] + ' to ' + end_time_str
 
         # Find average text message length in words
         avg_words = round(self.texts_only['word_count'].mean(), 2)
@@ -88,8 +88,7 @@ class AnalyseChat:
         multimedia = len(self.chat_history[self.chat_history['media_type'].isin(multimedia_filters)])
 
         # Combine outputs
-        aggs = [no_participants, totals, avg_contributions, avg_delay, most_active_participant, reactions, most_active_time,
-                avg_words, multimedia]
+        aggs = [no_participants, totals, avg_contributions, avg_delay, most_active_participant, reactions, most_active_time, avg_words, multimedia]
         
         return aggs
     
@@ -134,13 +133,15 @@ class AnalyseChat:
         summary = summary.rename(columns = {'messages_sent': 'Messages Sent', 'reacts_received': 'Reacts Received', 'messages_with_reacts': 'Messages that Received Reacts'})
 
         # Add colour palette to distinguish between each participant
-        summary['palette'] = sns.color_palette('pastel', len(summary.index))
+        summary['palette'] = px.colors.qualitative.Plotly[:len(summary.index)]
 
         # Create subplots to display summarised stats from chat
+        fig = make_subplots(rows = 2, cols = 2, specs = [[{'type': 'domain'}, {'type': 'xy'}], [{'type': 'xy'}, {'type': 'xy'}]],
+                            subplot_titles = ('Breakdown of Messages Sent', 'Reacts Received per Message', 'Total Emojis Sent', 'Calls over Time (by Month)'))
+        
         # Plot 1 (pie chart)
-        fig, axs = plt.subplots(2, 2, figsize = (10, 10))
-        axs[0, 0].pie(summary['Messages Sent'][:-1], labels = summary.index[:-1], autopct='%1.0f%%', colors = summary['palette'][:-1])
-        axs[0, 0].set_title('Breakdown of Messages Sent')
+        fig.add_trace(go.Pie(labels = summary.index[:-1], values = summary['Messages Sent'], marker = dict(colors = summary['palette'][:-1].tolist()), textinfo = 'label+percent',
+                             textposition = 'outside', hole = 0.2), row = 1, col = 1)
 
         # Plot 2 (bar plot)
         # Extract chat aggregate value to plot
@@ -150,39 +151,34 @@ class AnalyseChat:
         reacts_data = summary.drop('Chat Aggregate').sort_values(by = 'Reacts Received per Message', ascending = False)
 
         # Plot chart and horizontal line for chat aggregate
-        sns.barplot(x = reacts_data.index, y = reacts_data['Reacts Received per Message'], palette = reacts_data['palette'].tolist(), ax = axs[0, 1])
-        axs[0, 1].axhline(y = chat_aggregate_value, color = 'grey', linestyle = '--', label = 'Chat Aggregate')
-        axs[0, 1].set_title('Reacts Received per Message')
-        axs[0, 1].set_xlabel('Participant')
-        axs[0, 1].set_ylabel('Reacts Received per Message')
-        for label in axs[0, 1].containers:
-            axs[0, 1].bar_label(label, padding = 3)
-
-        axs[0, 1].legend()
+        fig.add_trace(go.Bar(x = reacts_data.index,  y = reacts_data['Reacts Received per Message'], marker_color = reacts_data['palette'], text = reacts_data['Reacts Received per Message'], 
+                      textposition = 'outside'), row = 1, col = 2)
+        fig.add_shape(go.layout.Shape(type = 'line', x0 = -0.5, x1 = len(reacts_data.index), y0 = chat_aggregate_value, y1 = chat_aggregate_value, line = dict(color = 'Black', width = 2, 
+                      dash = 'dash')), row = 1, col = 2)
 
         # Plot 3 (horizontal bar plot)
         # Filter out chat aggregate and sort table
-        emojis_data = summary.drop('Chat Aggregate').sort_values(by = 'Emojis Sent', ascending = False)
+        emojis_data = summary.drop('Chat Aggregate').sort_values(by = 'Emojis Sent', ascending = True)
 
         # Plot chart
-        sns.barplot(x = emojis_data['Emojis Sent'], y = emojis_data.index, palette = emojis_data['palette'].tolist(), ax = axs[1, 0])
-        axs[1, 0].set_title('Emojis Sent')
-        axs[1, 0].set_xlabel('Emojis Sent')
-        axs[1, 0].set_ylabel('Participants')
-        for label in axs[1, 0].containers:
-            axs[1, 0].bar_label(label, padding = 3)
+        fig.add_trace(go.Bar(x = emojis_data['Emojis Sent'], y = emojis_data.index, orientation = 'h', marker_color = emojis_data['palette'], text = emojis_data['Emojis Sent'], 
+                      textposition = 'outside'), row = 2, col = 1)
 
         # Plot 4 (line chart)
         # Filter for calls only
         calls_data = self.chat_history[self.chat_history['content_type'] == 'Started Call'].groupby('month_start').size()
     
         # Plot chart
-        calls_data.plot(kind = 'line', marker = 'x', ax = axs[1, 1])
-        axs[1, 1].set_title('Calls over Time (by Month)')
-        axs[1, 1].set_xlabel('Month')
-        axs[1, 1].set_ylabel('Number of Calls')
-
-        plt.tight_layout()
+        fig.add_trace(go.Scatter(x = calls_data.index, y = calls_data.values, mode = 'lines+markers'), row = 2, col = 2)        
+        
+        # Update layout
+        fig.update_layout(showlegend = False, margin = dict(t = 100, l = 50, b = 50, r = 50), font = dict(size = 12), height = 800)
+        fig.update_xaxes(tickangle = 0, tickfont = dict(size = 12))
+        fig.update_yaxes(tickfont = dict(size = 12))
+        for annotation in fig['layout']['annotations']:
+            annotation['yanchor'] = 'bottom'
+            annotation['y'] = annotation['y'] + 0.05  
+            annotation['font'] = dict(size = 16)
 
         # Drop colour_palette column as it is no longer needed
         summary = summary.drop('palette', axis = 1)
@@ -191,44 +187,25 @@ class AnalyseChat:
 
     def cumulative_messages_over_time(self):
         
-        # Find cumulative count of messages sent by each participant by each date
+        # Find cumulative count of messages sent by date
         self.msgs_only['cumulative_count_msgs'] = self.msgs_only.groupby('sender_name').cumcount() + 1
         pivot_msg_counts = self.msgs_only.pivot_table(index = 'date', columns = 'sender_name', values = 'cumulative_count_msgs', aggfunc = 'last')
         pivot_msg_counts.fillna(method = 'ffill', inplace = True)
 
         # Find total messages sent over time for the user-defined time period
-        total_msgs_over_time = pivot_msg_counts.sum(axis = 1)
+        total_msgs_over_time = pivot_msg_counts.sum(axis = 1).reset_index()
+        total_msgs_over_time.columns = ['Date', 'Cumulative Count']
 
         # Unstack pivot table 
         cum_msg_counts = pivot_msg_counts.stack().reset_index()
-        cum_msg_counts.columns = ['date', 'sender_name', 'cumulative_count_msgs']
+        cum_msg_counts.columns = ['Date', 'Participant', 'Cumulative Count']
 
-        # Plot figure with subplots for total cumulative message count and pivot table data for each participant
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize = (12, 8), gridspec_kw = {'height_ratios': [1, 2]})
-
-        # Plot total message count
-        total_msgs_over_time.plot(kind = 'line', linewidth = 1.5, ax = ax1)
-        ax1.set_title('Total Message Count')
-        ax1.set_xlabel('Date')
-        ax1.set_ylabel('Cumulative Count')
-        ax1.grid(True)
-
-        # Plot participant message count
-        pivot_msg_counts.plot(kind = 'line', linewidth = 1.5, ax = ax2)
-        ax2.set_title('Message Count by Participant')
-        ax2.set_xlabel('Date')
-        ax2.set_ylabel('Cumulative Count')
-        ax2.legend(title = 'Participant', loc = 'best', fontsize = 8).get_title().set_fontsize('8')
-        ax2.grid(True)
-
-        fig.suptitle('Cumulative Count of Messages Sent', fontsize = 16)
-        plt.subplots_adjust(top = 0.5)
-        plt.tight_layout()
+        # Plot total cumulative message count
+        fig = px.line(total_msgs_over_time, x = 'Date', y = 'Cumulative Count', title = 'Cumulative Message Count')
 
         # Create racecar plot to dynamically visualise changes in cumulative count of messages
-        racecar = barplot(cum_msg_counts, item_column = 'sender_name', value_column = 'cumulative_count_msgs', time_column = 'date', top_entries = 10)
-        racecar_output = racecar.plot(title = 'Cumulative Count of Messages Sent', item_label = 'Participant', value_label = 'Cumulative Count', 
-                                      frame_duration = 75)
+        racecar = barplot(cum_msg_counts, item_column = 'Participant', value_column = 'Cumulative Count', time_column = 'Date', top_entries = 10)
+        racecar_output = racecar.plot(title = 'Cumulative Message Count by Participant', frame_duration = 75)
 
         return fig, racecar_output
 
@@ -250,98 +227,71 @@ class AnalyseChat:
                         color_discrete_sequence = px.colors.qualitative.Plotly)
 
         # Add button to show all lines
-        fig.update_layout(
-            updatemenus = [
-                dict(
-                    type = "buttons",
-                    x = 1.1,
-                    y = 1.25,
-                    buttons = [
-                        dict(label = "Show All",
-                            method = "update",
-                            args=[{"visible": [True] * len(raw_msg_counts['Participant'].unique())}])
-                    ]
-                )
-            ]
-        )
+        fig.update_layout(updatemenus = [dict(type = 'buttons', x = 1.1, y = 1.2, buttons = [dict(label = 'Show All', method = 'update',
+                            args=[{'visible': [True] * len(raw_msg_counts['Participant'].unique())}])])])
         
         return fig
     
-    def chat_activity(self, time_period):
+    def chat_activity(self):
 
-        # Create dictionary to map time period to user-defined input
-        plot_period = {'hour':'hour_of_day', 'day':'day_of_week', 'week':'week', 'month':'month', 'quarter':'quarter', 'year':'year'} 
+        # Create list of time periods to consider
+        plot_period = ['hour_of_day', 'day_of_week', 'week', 'month', 'quarter', 'year'] 
 
-        # Find all chat interactions for each participant based on user-defined time period
+        # Find all chat interactions for each participant based on each time period
         # This looks at all content, not only messages 
-        frequency = plot_period[time_period]
-        content_counts = self.chat_history.pivot_table(index = frequency, columns = 'sender_name', values = 'timestamp_ms', aggfunc = 'count', fill_value = 0)
+        area_plots = []
+        for period in plot_period:
+            clean_period = ' '.join([word.capitalize() if word != 'of' else word for word in period.split('_')])
 
-        # Plot user interactions
-        interactions = content_counts.plot(kind = 'bar', stacked = True, figsize = (12, 6))
-        plt.xlabel(time_period.title())
-        plt.ylabel('Count')
-        plt.title('Total Chat Interactions (by ' + time_period.title() + ')')
-        plt.legend(title = 'Participant', loc = 'best', fontsize = 8).get_title().set_fontsize('8')
-        plt.grid(True)
-        plt.tight_layout()
+            # Group interactions by period and participant
+            content_counts = self.chat_history.pivot_table(index = period, columns = 'sender_name', values = 'timestamp_ms', aggfunc = 'count', fill_value = 0)
 
-        # Save plot (create new directory to save output if not available already)
-        chat_activity_dir = os.path.join(self.save_dir, 'chat_activity')
-        if not os.path.exists(chat_activity_dir):
-            os.makedirs(chat_activity_dir)
+            # Unstack pivot table
+            plot_data = content_counts.stack().reset_index()
+            plot_data.columns = [clean_period, 'Participant', 'Interactions']
 
-        interactions.figure.savefig(os.path.join(chat_activity_dir, 'chat_interactions.jpg'))
+            # Plot user interactions
+            fig = px.area(plot_data, x = clean_period, y = 'Interactions', color = 'Participant', title = 'Number of Interactions by ' + clean_period, 
+                          color_discrete_sequence = px.colors.qualitative.Plotly)
 
+            area_plots.append(fig)     
+        
         # Group number of chat interactions by hour of day and day of week
         activity_data = self.chat_history.pivot_table(index = 'hour_of_day', columns = 'day_of_week', values = 'timestamp_ms', aggfunc = 'count', fill_value = 0)
 
         # Plot heatmap of total chat activity
-        plt.figure(figsize = (12, 10))
-        activity_heatmap = sns.heatmap(activity_data, cmap = 'YlGnBu', annot = True, fmt = 'd', cbar = True)
-        plt.title('Total Chat Activity Heatmap')
-        plt.xlabel('Day of Week')
-        plt.ylabel('Hour of Day')
-
-        # Save plot
-        activity_heatmap.figure.savefig(os.path.join(chat_activity_dir, 'chat_activity_heatmap.jpg'))
+        heatmap = go.Figure(data = go.Heatmap(z = activity_data.values, x = activity_data.columns, y = activity_data.index, text = activity_data.values,
+                        texttemplate = '%{text:.0f}', colorscale = 'Viridis'))
+        heatmap.update_layout(title = 'Heatmap of Chat Activity by Hour and Day of Week', xaxis_title = 'Day of Week', yaxis_title = 'Hour of Day', height = 800)
 
         # Find the top 10 most and least active days in the chat
         activity_by_date = self.chat_history.pivot_table(index = 'date', columns = 'sender_name', values = 'timestamp_ms', aggfunc = 'count', fill_value = 0)
         activity_by_date['total'] = activity_by_date.sum(axis = 1)
-        top_10_most_active = activity_by_date.sort_values(by = 'total', ascending = False).head(10).drop(columns = ['total'])
-        top_10_most_active.index = top_10_most_active.index.astype('category')
-        top_10_least_active = activity_by_date.sort_values(by = 'total', ascending = True).head(10).drop(columns = ['total'])
-        top_10_least_active.index = top_10_least_active.index.astype('category')
+        top_10_most_active = activity_by_date.nlargest(10, 'total').drop(columns = ['total'])
+        top_10_least_active = activity_by_date.nsmallest(10, 'total').drop(columns = ['total'])
+
+        # Unstack pivot tables
+        top_10_most_active_plot = top_10_most_active.stack().reset_index()
+        top_10_most_active_plot.columns = ['Date', 'Participant', 'Interactions']
+        top_10_least_active_plot = top_10_least_active.stack().reset_index()
+        top_10_least_active_plot.columns = ['Date', 'Participant', 'Interactions']
 
         # Plot figure with subplots for most and least active dates
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize = (12, 6))
+        extremes = make_subplots(rows = 1, cols = 2, subplot_titles = ('Top 10 Most Active Days', 'Top 10 Least Active Days'))
+        most = px.bar(top_10_most_active_plot, x = 'Date', y = 'Interactions', color = 'Participant', color_discrete_sequence = px.colors.qualitative.Plotly)    
+        for trace in most.data:
+            trace.showlegend = False
+            extremes.add_trace(trace, row = 1, col = 1)
 
-        # Plot total message count
-        top_10_most_active.plot(kind = 'bar', stacked = True, ax = ax1)
-        ax1.set_title('Top 10 Most Active Dates')
-        ax1.set_xlabel('Date')
-        ax1.set_ylabel('Count of Interactions')
-        plt.xticks(rotation = 0)
-        ax1.grid(True)
+        least = px.bar(top_10_least_active_plot, x = 'Date', y = 'Interactions', color = 'Participant', color_discrete_sequence = px.colors.qualitative.Plotly)        
+        for trace in least.data:
+            extremes.add_trace(trace, row = 1, col = 2)
 
-        # Plot participant message count
-        top_10_least_active.plot(kind = 'bar', stacked = True, ax = ax2)
-        ax2.set_title('Top 10 Most Active Dates')
-        ax2.set_xlabel('Date')
-        ax2.set_ylabel('Count of Interactions')
-        plt.xticks(rotation = 0)
-        ax2.grid(True)
+        extremes.update_layout(barmode = 'stack')
+        extremes.update_xaxes(type = 'category', categoryorder = 'array', categoryarray = top_10_most_active_plot['Date'], row = 1, col = 1)
+        extremes.update_xaxes(type = 'category', categoryorder = 'array', categoryarray = top_10_least_active_plot['Date'], row = 1, col = 2)
 
-        fig.suptitle('Top 10 Most and Least Active Dates by Total Chat Interactions', fontsize = 16)
-        # fig.legend(title = 'Participant', fontsize = 8).get_title().set_fontsize('8')
-        plt.subplots_adjust(top = 0.5)
-        plt.tight_layout()    
-
-        # Save plot
-        fig.savefig(os.path.join(chat_activity_dir, 'most_least_activity.jpg'))
-
-        return
+        return area_plots, heatmap, extremes
     
     def react_analysis(self):
 
@@ -360,7 +310,6 @@ class AnalyseChat:
         top_reactions_given = (top_reactions_given.reset_index(drop = True)
                            .set_index(top_reactions_given.groupby('actor').cumcount() + 1))
         reactions_given_participant = top_reactions_given.pivot(columns = 'actor', values = 'reaction').fillna('')
-        reactions_given_participant[''] = pd.NA
         reactions_given_participant['Group Aggregate'] = total_count_reactions.index
 
         # Find count of each distinct react received by each participant (top 10)
@@ -370,46 +319,31 @@ class AnalyseChat:
         top_reactions_received = (top_reactions_received.reset_index(drop = True)
                            .set_index(top_reactions_received.groupby('sender_name').cumcount() + 1))
         reactions_received_participant = top_reactions_received.pivot(columns = 'sender_name', values = 'reaction').fillna('')
-        reactions_received_participant[''] = pd.NA
         reactions_received_participant['Group Aggregate'] = total_count_reactions.index
-
-        # Save outputs as separate sheets in Excel file (create new directory to save output if not available already)
-        reactions_dir = os.path.join(self.save_dir, 'reactions')
-        if not os.path.exists(reactions_dir):
-            os.makedirs(reactions_dir)
-        
-        with pd.ExcelWriter(os.path.join(reactions_dir, 'react_analysis.xlsx')) as writer:
-            reactions_given_participant.to_excel(writer, sheet_name = 'Top 10 Reacts Given', index = True)
-            reactions_received_participant.to_excel(writer, sheet_name = 'Top 10 Reacts Received', index = True)
 
         # Calculate ratio of messages reacted to by each participant for other participants in the chat
         reacts_grid = reacts_exploded.pivot_table(index = 'actor', columns = 'sender_name', values = 'timestamp_ms', aggfunc = 'count', fill_value = 0)
         reacts_grid_ratio = 100 * reacts_grid.div(reacts_grid.sum(axis = 0), axis = 'columns')
 
-        # Create heatmap
-        react_heatmap = sns.heatmap(reacts_grid_ratio, cmap = 'YlGnBu', annot = True, fmt = '.4f', cbar = True)
-        plt.title('Reactions Heatmap (% Contribution by each Participant)', fontsize = 18)
-        plt.xlabel('Received by', fontsize = 16)
-        plt.ylabel('Given by', fontsize = 16)
-        plt.yticks(fontsize = 12, rotation = 0)
-        plt.xticks(fontsize = 12, rotation = 0)  
+        # Plot heatmap of inter-group reaction trends
+        heatmap = go.Figure(data = go.Heatmap(z = reacts_grid_ratio.values, x = reacts_grid_ratio.columns, y = reacts_grid_ratio.index, text = reacts_grid_ratio.values,
+                texttemplate = '%{text:.2f}%', colorscale = 'Viridis'))
+        heatmap.update_layout(title = 'Heatmap of Reactions Sent and Received by Participants', xaxis_title = 'Received by', yaxis_title = 'Given by', height = 800)
 
-        # Save plot
-        react_heatmap.figure.savefig(os.path.join(reactions_dir, 'reactions_heatmap.jpg'))
-
-        # Find the 10 most reacted to messages all-time
+        # Find the 25 most reacted to messages all-time (in case of tie-breakers, consider the most recent message)
         reacted_msgs_sorted = self.msgs_only.sort_values(by = ['reacts_count', 'date', 'sender_name'], ascending = [False, False, True])
-        top_reacted_msgs = reacted_msgs_sorted[['sender_name', 'content', 'reactions', 'date']].head(10)
+        reacted_msgs_sorted['coalesced_content'] = reacted_msgs_sorted['content'].fillna(reacted_msgs_sorted['media_type'])
+        top_reacted_msgs = reacted_msgs_sorted[['date', 'sender_name', 'coalesced_content', 'reacts_count']].head(25)
+        top_reacted_msgs.columns = ['Date', 'Participant', 'Content', 'Count of Reacts']
+        top_reacted_msgs.set_index('Date')
 
-        # Find the top reacted message for each participant all-time
-        top_reacted_msgs_participant = reacted_msgs_sorted.groupby('sender_name').first().reset_index()[['sender_name', 'content', 'reactions', 'date']]
-        
-        # Save outputs as separate sheets in Excel file
-        with pd.ExcelWriter(os.path.join(reactions_dir, 'top_reacted_messages.xlsx')) as writer:
-            top_reacted_msgs.to_excel(writer, sheet_name = 'Top 10 Reacted Messages', index = True)
-            top_reacted_msgs_participant.to_excel(writer, sheet_name = 'Most Reacted Messages by Participant', index = True)
+        # Find the top reacted message for each participant all-time (in case of tie-breakers, consider the most recent message)
+        top_reacted_msgs_participant = reacted_msgs_sorted.groupby('sender_name').first().reset_index()
+        top_reacted_msgs_participant = top_reacted_msgs_participant[['date', 'sender_name', 'coalesced_content', 'reacts_count']]
+        top_reacted_msgs_participant.columns = ['Date', 'Participant', 'Content', 'Count of Reacts']
+        top_reacted_msgs_participant.set_index('Date')
 
-        return
+        return reactions_given_participant, reactions_received_participant, heatmap, top_reacted_msgs, top_reacted_msgs_participant
 
     def word_analysis(self):
 
@@ -424,14 +358,12 @@ class AnalyseChat:
         # Topic modelling removed stopwords, lowered text, non-alphanumeric and lemmatisation
 
         # Get word length aggregates for text messages sent in chat
-        word_summary_chat = self.texts_only.agg(median_words = ('word_count', 'median'),
-                                               average_words = ('word_count', 'mean'),
-                                               max_words = ('word_count', 'max'))
+        word_summary_chat = self.texts_only.agg(average_words = ('word_count', 'mean'),
+                                                max_words = ('word_count', 'max'))
         
         # Get word length aggregates for text messages sent by each participant
-        word_summary_participant = self.texts_only.groupby('sender_name').agg(median_words = ('word_count', 'median'),
-                                                                             average_words = ('word_count', 'mean'),
-                                                                             max_words = ('word_count', 'max'))
+        word_summary_participant = self.texts_only.groupby('sender_name').agg(average_words = ('word_count', 'mean'),
+                                                                              max_words = ('word_count', 'max'))
         
         # Process text to normalise text, and remove stop words, emojis, and punctuation for word cloud plots
         self.texts_only['processed_text'] = self.texts_only['content'].apply(self.process_text)

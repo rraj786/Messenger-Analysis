@@ -34,14 +34,18 @@ def generate_report(args, group_name, chat_history):
             font-size: 28px;
             text-align: center;
             margin-top: 25px;
-            margin-bottom: 25px;
+            margin-bottom: 5px;
             text-decoration: underline;
+        }
+        .dfheader {
+            font-size: 18px;
+            font-weight: bold;
         }
         .caption {
             font-size: 16px;
             text-align: center;
-            margin-top: 25px;
-            margin-bottom: 25px;
+            margin-top: 5px;
+            margin-bottom: 30px;
         }
         .centered {
             display: flex;
@@ -65,7 +69,8 @@ def generate_report(args, group_name, chat_history):
 
     # Section 1
     # Display headline stats as cards across two rows
-    st.markdown(f'<div class="subheader">Headline Statistics', unsafe_allow_html = True)
+    st.markdown(f'<div class="subheader">Summary', unsafe_allow_html = True)
+    st.markdown(f'<div class="caption">High-level summary of Messenger group chat metrics with plots to highlight key trends.</div>', unsafe_allow_html = True)
     aggs = metrics.headline_stats()
     col1, col2, col3, col4, col5, col6 = st.columns(6)
     with col1:
@@ -91,11 +96,15 @@ def generate_report(args, group_name, chat_history):
     with col10:
         create_card('Mean Words per Message', '{:,}'.format(aggs[7]))
 
-    # Section 2
     # Display summary plots
-    st.markdown(f'<div class="subheader">Summary', unsafe_allow_html = True)
-    summary, fig = metrics.summary_stats()
-    st.pyplot(fig)
+    @st.cache_data
+    def summary_stats():
+        
+        return metrics.summary_stats()
+    
+    summary, fig = summary_stats()
+
+    st.plotly_chart(fig)
     
     # Display summary table under expanded tab 
     with st.expander('Expand to view full Summary Breakdown'):
@@ -104,25 +113,78 @@ def generate_report(args, group_name, chat_history):
         summary_styled = summary.style.apply(lambda x: ['background-color: yellow' if x.name == 'Chat Aggregate' else '' for _ in x], axis = 1)
         st.write(summary_styled, unsafe_allow_html = True)
 
-    # Section 3
+    # Section 2
     # Display cumulative messages over time
     st.markdown(f'<div class="subheader">Messages Sent over Time', unsafe_allow_html = True)
-    fig, racecar_output = metrics.cumulative_messages_over_time()
-    st.pyplot(fig)
+    st.markdown(f'<div class="caption">Message trends by participant and chat overall, with insights into seasonal patterns.</div>', unsafe_allow_html = True)
+    @st.cache_data
+    def cumulative_messages_over_time():
+        
+        return metrics.cumulative_messages_over_time()
+    
+    cum_fig, racecar_fig = cumulative_messages_over_time()
+
+    st.plotly_chart(cum_fig)
 
     # Display racecar output
-    st.plotly_chart(racecar_output)
+    st.plotly_chart(racecar_fig)
 
     # Display raw messages over time
-    fig = metrics.raw_messages_over_time()
-    st.plotly_chart(fig)
+    @st.cache_data
+    def raw_messages_over_time():
+        
+        return metrics.raw_messages_over_time()
+    
+    raw_fig = raw_messages_over_time()
+
+    st.plotly_chart(raw_fig)
+
+    # Section 3 
+    # Display chat activity over different time periods
+    st.markdown(f'<div class="subheader">Chat Activity', unsafe_allow_html = True)
+    st.markdown(f'<div class="caption">Analyse chat activity patterns to pinpoint peak engagement times and identify periods of high and low chat activity.</div>', 
+                unsafe_allow_html = True)
+ 
+    @st.cache_data
+    def chat_activity():
+
+        return metrics.chat_activity()
+    
+    period_plots, activity_fig, extremes_fig = chat_activity()
+    
+    # Create dropdown for user to selected desired time period
+    mapping = {'Hour of Day': 0, 'Day of Week': 1, 'Week': 2, 'Month': 3, 'Quarter': 4, 'Year': 5}
+    period = st.selectbox('Select a time period for Activity Breakdown below:', options = ['Hour of Day', 'Day of Week', 'Week', 'Month', 'Quarter', 'Year'])
+
+    st.plotly_chart(period_plots[mapping[period]])
+
+    # Display heatmap and extreme usage time
+    st.plotly_chart(activity_fig)
+    st.plotly_chart(extremes_fig)
+
+    # Section 4
+    # Display top used and received reacts by participant
+    st.markdown(f'<div class="subheader">Reactions Analysis', unsafe_allow_html = True)
+    st.markdown(f'<div class="caption">Identify most used reacts, group interactions, and top messages by number of reacts received.</div>', 
+                unsafe_allow_html = True)
+    given, received, react_fig, top_msgs, top_msgs_participant = metrics.react_analysis()
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown(f'<div class="dfheader">Top 10 Reacts Given</div>', unsafe_allow_html = True)
+        st.write(given)
+
+    with col2:
+        st.markdown(f'<div class="dfheader">Top 10 Reacts Received</div>', unsafe_allow_html = True)
+        st.write(received)
+    
+    # Display heatmap of react group interactions
+    st.plotly_chart(react_fig)
+
+    # Display top messages in chat
+    st.write(top_msgs)
+    st.write(top_msgs_participant)
 
 
-
-
-    # metrics.messages_over_time(args.cumulative_msgs_time_period)
-    # metrics.chat_activity(args.chat_activity_time_period)
-    # metrics.react_analysis()
     # metrics.word_analysis()
 
 def create_card(title, content):
