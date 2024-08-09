@@ -49,7 +49,7 @@ class AnalyseChat:
         self.texts_only = self.msgs_only[(self.msgs_only['content_type'] == 'Message') & (self.msgs_only['media_type'] == 'Text')]
 
         # Get all unique participants in chat
-        self.participants = self.chat_history['sender_name'].unique()
+        self.participants = sorted(self.chat_history['sender_name'].unique())
 
     def headline_stats(self):
 
@@ -72,7 +72,7 @@ class AnalyseChat:
         most_active_participant = (participant_contributions.idxmax(), participant_contributions.max())
 
         # Find number of reactions given
-        reactions = self.chat_history['reacts_count'].sum()
+        reactions = self.msgs_only['reacts_count'].sum()
 
         # Find most active period in a week
         hour_day_contributions = self.chat_history.groupby(['hour_of_day', 'day_of_week']).size()
@@ -94,21 +94,21 @@ class AnalyseChat:
     
     def summary_stats(self):
 
-        # Find messages sent and reacts received aggregations
+        # Find messages sent and reactions received aggregations
         summary = self.msgs_only.groupby('sender_name').agg(messages_sent = ('timestamp_ms', 'count'), 
                                                             reacts_received = ('reacts_count', 'sum'),
                                                             messages_with_reacts = ('reacts_count', lambda x: (x > 0).sum()))
-        
+
+        # Find number of reactions given
+        reacts_exploded = self.msgs_only.explode('reactions').dropna(subset = ['reactions'])
+        summary['Reactions Given'] = reacts_exploded['reactions'].apply(lambda x: x['actor']).value_counts()
+
+        # Find ratios for reactions per message and number of messages before receiving a reaction
+        summary['Reactions Received per Message'] = summary['reacts_received'] / summary['messages_sent']
+        summary['Messages Sent per Reaction'] = summary['messages_sent'] / summary['messages_with_reacts']
+
         # Find number of emojis sent
         summary['Emojis Sent'] = self.texts_only.groupby('sender_name').agg(emojis_sent = ('emojis_count', 'sum'))
-
-        # Find number of reacts given
-        reacts_exploded = self.msgs_only.explode('reactions').dropna(subset = ['reactions'])
-        summary['Reacts Given'] = reacts_exploded['reactions'].apply(lambda x: x['actor']).value_counts()
-
-        # Find ratios for reacts per message and number of messages before receiving a react
-        summary['Reacts Received per Message'] = summary['reacts_received'] / summary['messages_sent']
-        summary['Messages Sent per React'] = summary['messages_sent'] / summary['messages_with_reacts']
 
         # Find media type aggregations
         media_filters = ['Other', 'Text']
@@ -125,36 +125,31 @@ class AnalyseChat:
 
         # Add chat aggregates as last row
         summary.loc['Chat Aggregate'] = summary.sum()
-        summary.at['Chat Aggregate', 'Reacts Received per Message'] = summary.at['Chat Aggregate', 'reacts_received'] / summary.at['Chat Aggregate', 'messages_sent']
-        summary.at['Chat Aggregate', 'Messages Sent per React'] = summary.at['Chat Aggregate', 'messages_sent'] / summary.at['Chat Aggregate', 'messages_with_reacts']
+        summary.at['Chat Aggregate', 'Reactions Received per Message'] = summary.at['Chat Aggregate', 'reacts_received'] / summary.at['Chat Aggregate', 'messages_sent']
+        summary.at['Chat Aggregate', 'Messages Sent per Reaction'] = summary.at['Chat Aggregate', 'messages_sent'] / summary.at['Chat Aggregate', 'messages_with_reacts']
 
         # Rename columns for consistency
         summary = summary.rename_axis('Participant')
-        summary = summary.rename(columns = {'messages_sent': 'Messages Sent', 'reacts_received': 'Reacts Received', 'messages_with_reacts': 'Messages that Received Reacts'})
+        summary = summary.rename(columns = {'messages_sent': 'Messages Sent', 'reacts_received': 'Reactions Received', 'messages_with_reacts': 'Messages that Received Reactions'})
 
         # Add colour palette to distinguish between each participant
         summary['palette'] = px.colors.qualitative.Plotly[:len(summary.index)]
 
         # Create subplots to display summarised stats from chat
         fig = make_subplots(rows = 2, cols = 2, specs = [[{'type': 'domain'}, {'type': 'xy'}], [{'type': 'xy'}, {'type': 'xy'}]],
-                            subplot_titles = ('Breakdown of Messages Sent', 'Reacts Received per Message', 'Total Emojis Sent', 'Calls over Time (by Month)'))
+                            subplot_titles = ('Breakdown of Messages Sent', 'Reactions Received per Message', 'Total Emojis Sent', 'Calls over Time (by Month)'))
         
         # Plot 1 (pie chart)
-        fig.add_trace(go.Pie(labels = summary.index[:-1], values = summary['Messages Sent'], marker = dict(colors = summary['palette'][:-1].tolist()), textinfo = 'label+percent',
+        fig.add_trace(go.Pie(labels = summary.index[:-1], values = summary['Messages Sent'][:-1], marker = dict(colors = summary['palette'][:-1].tolist()), textinfo = 'label+percent',
                              textposition = 'outside', hole = 0.2), row = 1, col = 1)
 
         # Plot 2 (bar plot)
-        # Extract chat aggregate value to plot
-        chat_aggregate_value = summary.loc['Chat Aggregate', 'Reacts Received per Message']
+        # Sort table
+        reacts_data = summary.sort_values(by = 'Reactions Received per Message', ascending = False)
 
-        # Filter out chat aggregate and sort table
-        reacts_data = summary.drop('Chat Aggregate').sort_values(by = 'Reacts Received per Message', ascending = False)
-
-        # Plot chart and horizontal line for chat aggregate
-        fig.add_trace(go.Bar(x = reacts_data.index,  y = reacts_data['Reacts Received per Message'], marker_color = reacts_data['palette'], text = reacts_data['Reacts Received per Message'], 
-                      textposition = 'outside'), row = 1, col = 2)
-        fig.add_shape(go.layout.Shape(type = 'line', x0 = -0.5, x1 = len(reacts_data.index), y0 = chat_aggregate_value, y1 = chat_aggregate_value, line = dict(color = 'Black', width = 2, 
-                      dash = 'dash')), row = 1, col = 2)
+        # Plot chart
+        fig.add_trace(go.Bar(x = reacts_data.index,  y = reacts_data['Reactions Received per Message'], marker_color = reacts_data['palette'], text = reacts_data['Reactions Received per Message'], 
+                      textposition = 'outside', texttemplate = '%{text:.2f}'), row = 1, col = 2)
 
         # Plot 3 (horizontal bar plot)
         # Filter out chat aggregate and sort table
@@ -172,13 +167,16 @@ class AnalyseChat:
         fig.add_trace(go.Scatter(x = calls_data.index, y = calls_data.values, mode = 'lines+markers'), row = 2, col = 2)        
         
         # Update layout
-        fig.update_layout(showlegend = False, margin = dict(t = 100, l = 50, b = 50, r = 50), font = dict(size = 12), height = 800)
-        fig.update_xaxes(tickangle = 0, tickfont = dict(size = 12))
+        fig.update_layout(showlegend = False, margin = dict(t = 100, l = 50, b = 50, r = 50), font = dict(size = 12), height = 900)
+        fig.update_xaxes(tickangle = 30, tickfont = dict(size = 11))
         fig.update_yaxes(tickfont = dict(size = 12))
         for annotation in fig['layout']['annotations']:
             annotation['yanchor'] = 'bottom'
-            annotation['y'] = annotation['y'] + 0.05  
+            annotation['y'] = annotation['y'] + 0.03  
             annotation['font'] = dict(size = 16)
+
+        # Store summary for use in react analysis
+        self.summary = summary
 
         # Drop colour_palette column as it is no longer needed
         summary = summary.drop('palette', axis = 1)
@@ -203,7 +201,7 @@ class AnalyseChat:
         # Plot total cumulative message count
         fig = px.line(total_msgs_over_time, x = 'Date', y = 'Cumulative Count', title = 'Cumulative Message Count')
 
-        # Create racecar plot to dynamically visualise changes in cumulative count of messages
+        # Create racecar plot to dynamically visualise changes in cumulative count of messages (address colour scheme)
         racecar = barplot(cum_msg_counts, item_column = 'Participant', value_column = 'Cumulative Count', time_column = 'Date', top_entries = 10)
         racecar_output = racecar.plot(title = 'Cumulative Message Count by Participant', frame_duration = 75)
 
@@ -278,11 +276,14 @@ class AnalyseChat:
 
         # Plot figure with subplots for most and least active dates
         extremes = make_subplots(rows = 1, cols = 2, subplot_titles = ('Top 10 Most Active Days', 'Top 10 Least Active Days'))
+        
+        # Plot 1 (stacked bar chart)
         most = px.bar(top_10_most_active_plot, x = 'Date', y = 'Interactions', color = 'Participant', color_discrete_sequence = px.colors.qualitative.Plotly)    
         for trace in most.data:
             trace.showlegend = False
             extremes.add_trace(trace, row = 1, col = 1)
 
+        # Plot 2 (stacked bar chart)
         least = px.bar(top_10_least_active_plot, x = 'Date', y = 'Interactions', color = 'Participant', color_discrete_sequence = px.colors.qualitative.Plotly)        
         for trace in least.data:
             extremes.add_trace(trace, row = 1, col = 2)
@@ -321,6 +322,51 @@ class AnalyseChat:
         reactions_received_participant = top_reactions_received.pivot(columns = 'sender_name', values = 'reaction').fillna('')
         reactions_received_participant['Group Aggregate'] = total_count_reactions.index
 
+        # Plot figure with subplots containing number of reacts given and received
+        fig = make_subplots(rows = 2, cols = 2, specs = [[{'type': 'domain'}, {'type': 'xy'}], [{'type': 'xy'}, {'type': 'xy'}]],
+                            subplot_titles = ('Breakdown of Reactions Given', 'Proportion of Messages that Received Reactions vs. Reactions Given', 'Messages Sent per Reaction', 
+                                              'Reactions Sent over Time (by Month)'))
+        
+        # Plot 1 (pie chart)
+        fig.add_trace(go.Pie(labels = self.summary.index[:-1], values = self.summary['Reactions Given'][:-1], marker = dict(colors = self.summary['palette'][:-1].tolist()), textinfo = 'label+percent',
+                             textposition = 'outside', hole = 0.2, showlegend = False), row = 1, col = 1)
+
+        # Plot 2 (grouped bar plot)
+        # Calculate proportion of reactions to messages given and received
+        self.summary['Reactions Received'] = 100 * self.summary['Messages that Received Reactions'] / self.summary['Messages Sent']
+        self.summary['Reactions Given'] = 100 * self.summary['Reactions Given'] / self.summary.loc['Chat Aggregate', 'Messages Sent']
+
+        # Plot chart
+        fig.add_trace(go.Bar(x = self.summary.index[:-1],  y = self.summary['Reactions Received'][:-1], text = self.summary['Reactions Received'][:-1], textposition = 'outside',
+                             texttemplate = '%{text:.2f}%', marker_color = 'rgba(255, 100, 102, 0.8)', name = 'Reactions Received %', showlegend = True), row = 1, col = 2)
+        fig.add_trace(go.Bar(x = self.summary.index[:-1],  y = self.summary['Reactions Given'][:-1], text = self.summary['Reactions Given'][:-1], textposition = 'outside', 
+                             texttemplate = '%{text:.2f}%', marker_color = 'rgba(100, 200, 102, 0.8)', name = 'Reactions Given %', showlegend = True), row = 1, col = 2)
+        fig.update_layout(barmode = 'group')
+
+        # Plot 3 (bar plot)
+        # Sort table
+        reacts_data1 = self.summary.sort_values(by = 'Messages Sent per Reaction', ascending = True)
+        
+        # Plot chart and horizontal line for chat aggregate
+        fig.add_trace(go.Bar(x = reacts_data1.index,  y = reacts_data1['Messages Sent per Reaction'], marker_color = reacts_data1['palette'], text = reacts_data1['Messages Sent per Reaction'], 
+                             textposition = 'outside', texttemplate = '%{text:.2f}', showlegend = False), row = 2, col = 1)
+
+        # Plot 4 (line chart)
+        # Find number of reactions given by month
+        reacts_data2 = reacts_exploded.groupby('month_start').size()
+                            
+        # Plot chart
+        fig.add_trace(go.Scatter(x = reacts_data2.index, y = reacts_data2.values, mode = 'lines+markers', showlegend = False), row = 2, col = 2)        
+        
+        # Update layout
+        fig.update_layout(margin = dict(t = 100, l = 50, b = 50, r = 50), font = dict(size = 12), height = 900)
+        fig.update_xaxes(tickangle = 30, tickfont = dict(size = 11))
+        fig.update_yaxes(tickfont = dict(size = 12))
+        for annotation in fig['layout']['annotations']:
+            annotation['yanchor'] = 'bottom'
+            annotation['y'] = annotation['y'] + 0.03  
+            annotation['font'] = dict(size = 16)
+
         # Calculate ratio of messages reacted to by each participant for other participants in the chat
         reacts_grid = reacts_exploded.pivot_table(index = 'actor', columns = 'sender_name', values = 'timestamp_ms', aggfunc = 'count', fill_value = 0)
         reacts_grid_ratio = 100 * reacts_grid.div(reacts_grid.sum(axis = 0), axis = 'columns')
@@ -329,7 +375,7 @@ class AnalyseChat:
         heatmap = go.Figure(data = go.Heatmap(z = reacts_grid_ratio.values, x = reacts_grid_ratio.columns, y = reacts_grid_ratio.index, text = reacts_grid_ratio.values,
                 texttemplate = '%{text:.2f}%', colorscale = 'Viridis'))
         heatmap.update_layout(title = 'Heatmap of Reactions Sent and Received by Participants', xaxis_title = 'Received by', yaxis_title = 'Given by', height = 800)
-
+        
         # Find the 25 most reacted to messages all-time (in case of tie-breakers, consider the most recent message)
         reacted_msgs_sorted = self.msgs_only.sort_values(by = ['reacts_count', 'date', 'sender_name'], ascending = [False, False, True])
         reacted_msgs_sorted['coalesced_content'] = reacted_msgs_sorted['content'].fillna(reacted_msgs_sorted['media_type'])
@@ -343,7 +389,7 @@ class AnalyseChat:
         top_reacted_msgs_participant.columns = ['Date', 'Participant', 'Content', 'Count of Reacts']
         top_reacted_msgs_participant.set_index('Date')
 
-        return reactions_given_participant, reactions_received_participant, heatmap, top_reacted_msgs, top_reacted_msgs_participant
+        return reactions_given_participant, reactions_received_participant, fig, heatmap, top_reacted_msgs, top_reacted_msgs_participant
 
     def word_analysis(self):
 
@@ -424,7 +470,7 @@ class AnalyseChat:
         plt.show()
         
         return
-    
+
     @staticmethod
     def process_text(text):
 

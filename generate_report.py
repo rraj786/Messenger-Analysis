@@ -53,6 +53,9 @@ def generate_report(args, group_name, chat_history):
             align-items: center;
             text-align: center;
         }
+        .reportview-container .dataframe-container {
+            width: 100% !important;
+        }
         </style>
         """,
         unsafe_allow_html = True
@@ -71,7 +74,9 @@ def generate_report(args, group_name, chat_history):
     # Display headline stats as cards across two rows
     st.markdown(f'<div class="subheader">Summary', unsafe_allow_html = True)
     st.markdown(f'<div class="caption">High-level summary of Messenger group chat metrics with plots to highlight key trends.</div>', unsafe_allow_html = True)
+   
     aggs = metrics.headline_stats()
+    
     col1, col2, col3, col4, col5, col6 = st.columns(6)
     with col1:
         create_card('Number of Participants', '{:,}'.format(aggs[0]))
@@ -96,13 +101,8 @@ def generate_report(args, group_name, chat_history):
     with col10:
         create_card('Mean Words per Message', '{:,}'.format(aggs[7]))
 
-    # Display summary plots
-    @st.cache_data
-    def summary_stats():
-        
-        return metrics.summary_stats()
-    
-    summary, fig = summary_stats()
+    # Display summary plots    
+    summary, fig = metrics.summary_stats()
 
     st.plotly_chart(fig)
     
@@ -111,31 +111,41 @@ def generate_report(args, group_name, chat_history):
 
         # Highlight totals row
         summary_styled = summary.style.apply(lambda x: ['background-color: yellow' if x.name == 'Chat Aggregate' else '' for _ in x], axis = 1)
-        st.write(summary_styled, unsafe_allow_html = True)
+        summary_styled = summary_styled.format({
+                            'Messages Sent': "{:,.0f}",
+                            'Reactions Received': "{:,.0f}",
+                            'Messages that Received Reactions': "{:,.0f}",
+                            'Reactions Given': "{:,.0f}",
+                            'Reactions Received per Message': "{:.4f}",
+                            'Messages Sent per Reaction': "{:.4f}",
+                            'Emojis Sent': "{:,.0f}",
+                            'Audio': "{:,.0f}",
+                            'Deleted Message': "{:,.0f}",
+                            'File Attachment': "{:,.0f}",
+                            'Gif': "{:,.0f}",
+                            'Photo/Video': "{:,.0f}",
+                            'Shared Link': "{:,.0f}",
+                            'Sticker': "{:,.0f}",
+                            'Added Member to Group': "{:,.0f}",
+                            'Member Left Group': "{:,.0f}",
+                            'Shared Location': "{:,.0f}",
+                            'Started Call': "{:,.0f}"})
+        st.write(summary_styled)
 
     # Section 2
     # Display cumulative messages over time
     st.markdown(f'<div class="subheader">Messages Sent over Time', unsafe_allow_html = True)
     st.markdown(f'<div class="caption">Message trends by participant and chat overall, with insights into seasonal patterns.</div>', unsafe_allow_html = True)
-    @st.cache_data
-    def cumulative_messages_over_time():
-        
-        return metrics.cumulative_messages_over_time()
     
-    cum_fig, racecar_fig = cumulative_messages_over_time()
+    cum_fig, racecar_fig = metrics.cumulative_messages_over_time()
 
     st.plotly_chart(cum_fig)
 
     # Display racecar output
     st.plotly_chart(racecar_fig)
 
-    # Display raw messages over time
-    @st.cache_data
-    def raw_messages_over_time():
-        
-        return metrics.raw_messages_over_time()
-    
-    raw_fig = raw_messages_over_time()
+    # Display raw messages over time    
+    raw_fig = metrics.raw_messages_over_time()
 
     st.plotly_chart(raw_fig)
 
@@ -144,13 +154,8 @@ def generate_report(args, group_name, chat_history):
     st.markdown(f'<div class="subheader">Chat Activity', unsafe_allow_html = True)
     st.markdown(f'<div class="caption">Analyse chat activity patterns to pinpoint peak engagement times and identify periods of high and low chat activity.</div>', 
                 unsafe_allow_html = True)
- 
-    @st.cache_data
-    def chat_activity():
-
-        return metrics.chat_activity()
     
-    period_plots, activity_fig, extremes_fig = chat_activity()
+    period_plots, activity_fig, extremes_fig = metrics.chat_activity()
     
     # Create dropdown for user to selected desired time period
     mapping = {'Hour of Day': 0, 'Day of Week': 1, 'Week': 2, 'Month': 3, 'Quarter': 4, 'Year': 5}
@@ -167,24 +172,35 @@ def generate_report(args, group_name, chat_history):
     st.markdown(f'<div class="subheader">Reactions Analysis', unsafe_allow_html = True)
     st.markdown(f'<div class="caption">Identify most used reacts, group interactions, and top messages by number of reacts received.</div>', 
                 unsafe_allow_html = True)
-    given, received, react_fig, top_msgs, top_msgs_participant = metrics.react_analysis()
+    given, received, react_fig1, react_fig2, top_msgs, top_msgs_participant = metrics.react_analysis()
     col1, col2 = st.columns(2)
     with col1:
         st.markdown(f'<div class="dfheader">Top 10 Reacts Given</div>', unsafe_allow_html = True)
-        st.write(given)
-
+        st.dataframe(given)
     with col2:
         st.markdown(f'<div class="dfheader">Top 10 Reacts Received</div>', unsafe_allow_html = True)
-        st.write(received)
+        st.dataframe(received)
     
+    # Display number of reacts given and received by participant
+    st.plotly_chart(react_fig1)
+
     # Display heatmap of react group interactions
-    st.plotly_chart(react_fig)
+    st.plotly_chart(react_fig2)
 
     # Display top messages in chat
-    st.write(top_msgs)
-    st.write(top_msgs_participant)
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown(f'<div class="dfheader">Top 25 Messages Sent based on Number of Reacts Received</div>', unsafe_allow_html = True)
+        st.write(top_msgs)
+    with col2:
+        st.markdown(f'<div class="dfheader">Top Message Sent by each Participant based on Number of Reacts Received</div>', unsafe_allow_html = True)
+        st.write(top_msgs_participant)
 
-
+    # Section 5
+    # Display word length aggregates 
+    st.markdown(f'<div class="subheader">Word Analysis', unsafe_allow_html = True)
+    st.markdown(f'<div class="caption">Identify most used reacts, group interactions, and top messages by number of reacts received.</div>', 
+                unsafe_allow_html = True)
     # metrics.word_analysis()
 
 def create_card(title, content):
