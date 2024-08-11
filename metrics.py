@@ -16,7 +16,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from raceplotly.plots import barplot
 import re
-import seaborn as sns
 from torch import cuda, device
 from tqdm import tqdm
 from transformers import pipeline
@@ -168,7 +167,7 @@ class AnalyseChat:
         
         # Update layout
         fig.update_layout(showlegend = False, margin = dict(t = 100, l = 50, b = 50, r = 50), font = dict(size = 12), height = 900)
-        fig.update_xaxes(tickangle = 30, tickfont = dict(size = 11))
+        fig.update_xaxes(tickangle = 0, tickfont = dict(size = 10))
         fig.update_yaxes(tickfont = dict(size = 12))
         for annotation in fig['layout']['annotations']:
             annotation['yanchor'] = 'bottom'
@@ -202,8 +201,11 @@ class AnalyseChat:
         fig = px.line(total_msgs_over_time, x = 'Date', y = 'Cumulative Count', title = 'Cumulative Message Count')
 
         # Create racecar plot to dynamically visualise changes in cumulative count of messages (address colour scheme)
-        racecar = barplot(cum_msg_counts, item_column = 'Participant', value_column = 'Cumulative Count', time_column = 'Date', top_entries = 10)
-        racecar_output = racecar.plot(title = 'Cumulative Message Count by Participant', frame_duration = 75)
+        rgb_colours = self.convert_hex_to_rgb(px.colors.qualitative.Plotly[:len(self.participants)])
+        plot_colours = dict(zip(self.participants, rgb_colours))
+        racecar = barplot(cum_msg_counts, item_column = 'Participant', value_column = 'Cumulative Count', time_column = 'Date', item_color = plot_colours)
+        racecar_output = racecar.plot(title = 'Cumulative Message Count by Participant', item_label = 'Participant', value_label = 'Cumulative Count', 
+                                      frame_duration = 75)
 
         return fig, racecar_output
 
@@ -237,8 +239,15 @@ class AnalyseChat:
 
         # Find all chat interactions for each participant based on each time period
         # This looks at all content, not only messages 
-        area_plots = []
+        # Create subplots to display summarised stats from chat
+        rows = 3
+        cols = 2
+        titles = []
         for period in plot_period:
+            titles.append(' '.join([word.capitalize() if word != 'of' else word for word in period.split('_')]))
+        
+        fig = make_subplots(rows = rows, cols = cols, subplot_titles = titles)
+        for idx, period in enumerate(plot_period):
             clean_period = ' '.join([word.capitalize() if word != 'of' else word for word in period.split('_')])
 
             # Group interactions by period and participant
@@ -248,11 +257,20 @@ class AnalyseChat:
             plot_data = content_counts.stack().reset_index()
             plot_data.columns = [clean_period, 'Participant', 'Interactions']
 
-            # Plot user interactions
-            fig = px.area(plot_data, x = clean_period, y = 'Interactions', color = 'Participant', title = 'Number of Interactions by ' + clean_period, 
-                          color_discrete_sequence = px.colors.qualitative.Plotly)
+            # Create subplot and add to figure
+            area_fig = px.area(plot_data, x = clean_period, y = 'Interactions', color = 'Participant', color_discrete_sequence = px.colors.qualitative.Plotly)
+            for trace in area_fig.data:
 
-            area_plots.append(fig)     
+                # Only show legend for last plot 
+                if idx == len(plot_period) - 1:
+                    trace.showlegend = True
+                else:
+                    trace.showlegend = False
+                    
+                fig.add_trace(trace, row = (idx // cols) + 1, col = (idx % cols) + 1)
+
+        fig.update_layout(margin = dict(t = 100, l = 50, b = 50, r = 50), font = dict(size = 12), height = 1200, title_text = 'Interactions Over Different Time Periods',
+                          title_font = dict(size = 16))
         
         # Group number of chat interactions by hour of day and day of week
         activity_data = self.chat_history.pivot_table(index = 'hour_of_day', columns = 'day_of_week', values = 'timestamp_ms', aggfunc = 'count', fill_value = 0)
@@ -292,7 +310,7 @@ class AnalyseChat:
         extremes.update_xaxes(type = 'category', categoryorder = 'array', categoryarray = top_10_most_active_plot['Date'], row = 1, col = 1)
         extremes.update_xaxes(type = 'category', categoryorder = 'array', categoryarray = top_10_least_active_plot['Date'], row = 1, col = 2)
 
-        return area_plots, heatmap, extremes
+        return fig, heatmap, extremes
     
     def react_analysis(self):
 
@@ -360,7 +378,7 @@ class AnalyseChat:
         
         # Update layout
         fig.update_layout(margin = dict(t = 100, l = 50, b = 50, r = 50), font = dict(size = 12), height = 900)
-        fig.update_xaxes(tickangle = 30, tickfont = dict(size = 11))
+        fig.update_xaxes(tickangle = 0, tickfont = dict(size = 10))
         fig.update_yaxes(tickfont = dict(size = 12))
         for annotation in fig['layout']['annotations']:
             annotation['yanchor'] = 'bottom'
@@ -378,16 +396,15 @@ class AnalyseChat:
         
         # Find the 25 most reacted to messages all-time (in case of tie-breakers, consider the most recent message)
         reacted_msgs_sorted = self.msgs_only.sort_values(by = ['reacts_count', 'date', 'sender_name'], ascending = [False, False, True])
-        reacted_msgs_sorted['coalesced_content'] = reacted_msgs_sorted['content'].fillna(reacted_msgs_sorted['media_type'])
-        top_reacted_msgs = reacted_msgs_sorted[['date', 'sender_name', 'coalesced_content', 'reacts_count']].head(25)
-        top_reacted_msgs.columns = ['Date', 'Participant', 'Content', 'Count of Reacts']
-        top_reacted_msgs.set_index('Date')
+        top_reacted_msgs = reacted_msgs_sorted[['date', 'sender_name', 'content', 'reacts_count', 'reactions', 'emojis_count', 'media_type', 'content_type']].head(25)
+        top_reacted_msgs.columns = ['Date', 'Participant', 'Content', 'Count of Reactions', 'Reactions', 'Count of Emojis', 'Media Type', 'Content Type']
+        top_reacted_msgs.reset_index().set_index('Date')
 
         # Find the top reacted message for each participant all-time (in case of tie-breakers, consider the most recent message)
         top_reacted_msgs_participant = reacted_msgs_sorted.groupby('sender_name').first().reset_index()
-        top_reacted_msgs_participant = top_reacted_msgs_participant[['date', 'sender_name', 'coalesced_content', 'reacts_count']]
-        top_reacted_msgs_participant.columns = ['Date', 'Participant', 'Content', 'Count of Reacts']
-        top_reacted_msgs_participant.set_index('Date')
+        top_reacted_msgs_participant = top_reacted_msgs_participant[['date', 'sender_name', 'content', 'reacts_count', 'reactions', 'emojis_count', 'media_type', 'content_type']]
+        top_reacted_msgs_participant.columns = ['Date', 'Participant', 'Content', 'Count of Reactions', 'Reactions', 'Count of Emojis', 'Media Type', 'Content Type']
+        top_reacted_msgs_participant.reset_index().set_index('Date')
 
         return reactions_given_participant, reactions_received_participant, fig, heatmap, top_reacted_msgs, top_reacted_msgs_participant
 
@@ -461,15 +478,26 @@ class AnalyseChat:
         proportions = proportions.reset_index().melt(id_vars='sender_name', var_name='sentiment', value_name='proportion')
 
         # Plot using seaborn
-        plt.figure(figsize=(10, 6))
-        sns.barplot(x='sender_name', y='proportion', hue='sentiment', data=proportions, palette='Set3')
-        plt.xlabel('Sender Name')
-        plt.ylabel('Proportion of Messages')
-        plt.title('Proportion of Sentiments by Sender')
-        plt.tight_layout()
-        plt.show()
+        # plt.figure(figsize=(10, 6))
+        # sns.barplot(x='sender_name', y='proportion', hue='sentiment', data=proportions, palette='Set3')
+        # plt.xlabel('Sender Name')
+        # plt.ylabel('Proportion of Messages')
+        # plt.title('Proportion of Sentiments by Sender')
+        # plt.tight_layout()
+        # plt.show()
         
         return
+
+    @staticmethod
+    def convert_hex_to_rgb(hex_list):
+        
+        # Iterate through list and convert hex string to rgb format
+        rgb_list = []
+        for hex_colour in hex_list:
+            hex_str = hex_colour.lstrip('#')
+            rgb_list.append('rgb' + str(tuple(int(hex_str[i:i + 2], 16) for i in (0, 2, 4))))
+
+        return rgb_list
 
     @staticmethod
     def process_text(text):

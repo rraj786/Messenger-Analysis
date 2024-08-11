@@ -29,12 +29,12 @@ def transform_data(df):
     day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     df['day_of_week'] = pd.Categorical(df['datetime_local'].dt.day_name(), categories = day_order, ordered = True)
     df['date'] = df['datetime_local'].dt.date
-    df['week'] = df['datetime_local'].dt.isocalendar().week
+    df['week_number'] = df['datetime_local'].dt.isocalendar().week
     df['week_start'] = df['datetime_local'].dt.to_period('W').dt.start_time
     month_order = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
     df['month'] = pd.Categorical(df['datetime_local'].dt.month_name(), categories = month_order, ordered = True)
     df['month_start'] = df['datetime_local'].dt.to_period('M').dt.start_time
-    df['quarter'] = df['datetime_local'].dt.quarter
+    df['quarter_number'] = df['datetime_local'].dt.quarter
     df['quarter_start'] = df['datetime_local'].dt.to_period('Q').dt.start_time
     df['year'] = df['datetime_local'].dt.year
     

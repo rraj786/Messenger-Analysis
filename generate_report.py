@@ -188,13 +188,10 @@ def generate_report(args, group_name, chat_history):
     st.plotly_chart(react_fig2)
 
     # Display top messages in chat
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown(f'<div class="dfheader">Top 25 Messages Sent based on Number of Reacts Received</div>', unsafe_allow_html = True)
-        st.write(top_msgs)
-    with col2:
-        st.markdown(f'<div class="dfheader">Top Message Sent by each Participant based on Number of Reacts Received</div>', unsafe_allow_html = True)
-        st.write(top_msgs_participant)
+    st.markdown(f'<div class="dfheader">Top 25 Messages Sent based on Number of Reacts Received</div>', unsafe_allow_html = True)
+    st.write(top_msgs)
+    st.markdown(f'<div class="dfheader">Top Message Sent by each Participant based on Number of Reacts Received</div>', unsafe_allow_html = True)
+    st.write(top_msgs_participant)
 
     # Section 5
     # Display word length aggregates 
