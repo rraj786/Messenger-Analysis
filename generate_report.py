@@ -155,13 +155,9 @@ def generate_report(args, group_name, chat_history):
     st.markdown(f'<div class="caption">Analyse chat activity patterns to pinpoint peak engagement times and identify periods of high and low chat activity.</div>', 
                 unsafe_allow_html = True)
     
-    period_plots, activity_fig, extremes_fig = metrics.chat_activity()
+    periods_fig, activity_fig, extremes_fig = metrics.chat_activity()
     
-    # Create dropdown for user to selected desired time period
-    mapping = {'Hour of Day': 0, 'Day of Week': 1, 'Week': 2, 'Month': 3, 'Quarter': 4, 'Year': 5}
-    period = st.selectbox('Select a time period for Activity Breakdown below:', options = ['Hour of Day', 'Day of Week', 'Week', 'Month', 'Quarter', 'Year'])
-
-    st.plotly_chart(period_plots[mapping[period]])
+    st.plotly_chart(periods_fig)
 
     # Display heatmap and extreme usage time
     st.plotly_chart(activity_fig)
@@ -189,9 +185,9 @@ def generate_report(args, group_name, chat_history):
 
     # Display top messages in chat
     st.markdown(f'<div class="dfheader">Top 25 Messages Sent based on Number of Reacts Received</div>', unsafe_allow_html = True)
-    st.write(top_msgs)
+    st.dataframe(top_msgs, use_container_width = True)
     st.markdown(f'<div class="dfheader">Top Message Sent by each Participant based on Number of Reacts Received</div>', unsafe_allow_html = True)
-    st.write(top_msgs_participant)
+    st.dataframe(top_msgs_participant, use_container_width = True)
 
     # Section 5
     # Display word length aggregates 

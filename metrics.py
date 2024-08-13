@@ -235,7 +235,7 @@ class AnalyseChat:
     def chat_activity(self):
 
         # Create list of time periods to consider
-        plot_period = ['hour_of_day', 'day_of_week', 'week', 'month', 'quarter', 'year'] 
+        plot_period = ['hour_of_day', 'day_of_week', 'week_number', 'month', 'quarter_number', 'year'] 
 
         # Find all chat interactions for each participant based on each time period
         # This looks at all content, not only messages 
@@ -397,14 +397,16 @@ class AnalyseChat:
         # Find the 25 most reacted to messages all-time (in case of tie-breakers, consider the most recent message)
         reacted_msgs_sorted = self.msgs_only.sort_values(by = ['reacts_count', 'date', 'sender_name'], ascending = [False, False, True])
         top_reacted_msgs = reacted_msgs_sorted[['date', 'sender_name', 'content', 'reacts_count', 'reactions', 'emojis_count', 'media_type', 'content_type']].head(25)
+        top_reacted_msgs['reactions'] = top_reacted_msgs['reactions'].astype('str')
         top_reacted_msgs.columns = ['Date', 'Participant', 'Content', 'Count of Reactions', 'Reactions', 'Count of Emojis', 'Media Type', 'Content Type']
-        top_reacted_msgs.reset_index().set_index('Date')
+        top_reacted_msgs.reset_index().drop(columns = ['index']).set_index('Date')
 
         # Find the top reacted message for each participant all-time (in case of tie-breakers, consider the most recent message)
         top_reacted_msgs_participant = reacted_msgs_sorted.groupby('sender_name').first().reset_index()
         top_reacted_msgs_participant = top_reacted_msgs_participant[['date', 'sender_name', 'content', 'reacts_count', 'reactions', 'emojis_count', 'media_type', 'content_type']]
+        top_reacted_msgs_participant['reactions'] = top_reacted_msgs_participant['reactions'].astype('str')
         top_reacted_msgs_participant.columns = ['Date', 'Participant', 'Content', 'Count of Reactions', 'Reactions', 'Count of Emojis', 'Media Type', 'Content Type']
-        top_reacted_msgs_participant.reset_index().set_index('Date')
+        top_reacted_msgs_participant.reset_index().drop(columns = ['index']).set_index('Date')
 
         return reactions_given_participant, reactions_received_participant, fig, heatmap, top_reacted_msgs, top_reacted_msgs_participant
 
@@ -421,13 +423,19 @@ class AnalyseChat:
         # Topic modelling removed stopwords, lowered text, non-alphanumeric and lemmatisation
 
         # Get word length aggregates for text messages sent in chat
-        word_summary_chat = self.texts_only.agg(average_words = ('word_count', 'mean'),
-                                                max_words = ('word_count', 'max'))
+        word_summary_chat = self.texts_only.agg(average_words = ('word_count', 'mean'))
         
         # Get word length aggregates for text messages sent by each participant
-        word_summary_participant = self.texts_only.groupby('sender_name').agg(average_words = ('word_count', 'mean'),
-                                                                              max_words = ('word_count', 'max'))
+        word_summary_participant = self.texts_only.groupby('sender_name').agg(average_words = ('word_count', 'mean'))
         
+        # Combine data and create bar plot of message lengths
+        word_summary_participant.loc['Chat Aggregate'] = word_summary_chat.values[0]
+        word_summary_participant['palette'] = self.summary['palette']
+        word_summary_participant = word_summary_participant.sort_values(by = ['average_words'], ascending = False)
+        word_fig = go.Figure(data = [go.Bar(x = word_summary_participant.index, y = word_summary_participant['average_words'], marker_color = word_summary_participant['palette'], 
+                     text = word_summary_participant['average_words'], textposition = 'outside', texttemplate = '%{text:.2f}', showlegend = False)])
+        word_fig.update_layout(title = 'Average Message Length by Words Used')
+
         # Process text to normalise text, and remove stop words, emojis, and punctuation for word cloud plots
         self.texts_only['processed_text'] = self.texts_only['content'].apply(self.process_text)
 
@@ -439,14 +447,6 @@ class AnalyseChat:
         plt.imshow(wordcloud_chat, interpolation = 'bilinear')
         plt.axis('off')
 
-        # Save plot (create new directory to save output if not available already)
-        word_analysis_dir = os.path.join(self.save_dir, 'word_analysis')
-        if not os.path.exists(word_analysis_dir):
-            os.makedirs(word_analysis_dir)
-
-        plt.savefig(os.path.join(word_analysis_dir, 'wordcloud_chat.jpg'), bbox_inches = 'tight')
-        plt.close()
-
         # Build word clouds for each participant (top 75 words)
         for person in self.participants:
             words_participant = self.texts_only[self.texts_only['sender_name'] == person]['processed_text']
@@ -456,11 +456,6 @@ class AnalyseChat:
             plt.title('75 Most Common Words used by ' + person)
             plt.imshow(wordcloud_partcipant, interpolation = 'bilinear')
             plt.axis('off')
-
-            # Save plot
-            file_name = 'wordcloud_' + person + '.jpg'
-            plt.savefig(os.path.join(word_analysis_dir, file_name), bbox_inches = 'tight')
-            plt.close()
 
         # Convert column of messages to Dataset object for efficient model processing
         data_dict = {'text': self.texts_only['content'].tolist()}
