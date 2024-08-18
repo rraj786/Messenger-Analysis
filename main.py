@@ -8,7 +8,6 @@
 
 import argparse
 from generate_report import *
-import os
 from process_json import *
 
 
@@ -28,4 +27,4 @@ if not os.path.exists(args.save_dir):
     os.makedirs(args.save_dir)
 
 # Generate Streamlit HTML report
-generate_report(args, group_name, chat_history)
+generate_report(chat_history, group_name, args)

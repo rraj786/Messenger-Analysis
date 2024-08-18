@@ -5,12 +5,11 @@
 '''
 
 
-from datetime import datetime
 from metrics import *
 import streamlit as st
 
 
-def generate_report(args, group_name, chat_history):
+def generate_report(chat_history, group_name, args):
 
     # Initialise AnalyseChat class
     metrics = AnalyseChat(chat_history, args.batch_size, args.save_dir)
@@ -38,7 +37,7 @@ def generate_report(args, group_name, chat_history):
             text-decoration: underline;
         }
         .dfheader {
-            font-size: 18px;
+            font-size: 16px;
             font-weight: bold;
         }
         .caption {
@@ -60,7 +59,6 @@ def generate_report(args, group_name, chat_history):
         """,
         unsafe_allow_html = True
     )
-
 
     # Set up notebook headers
     st.markdown(f'<div class="title">Messenger Group Chat Report for {group_name}</div>', unsafe_allow_html = True)
@@ -166,7 +164,7 @@ def generate_report(args, group_name, chat_history):
     # Section 4
     # Display top used and received reacts by participant
     st.markdown(f'<div class="subheader">Reactions Analysis', unsafe_allow_html = True)
-    st.markdown(f'<div class="caption">Identify most used reacts, group interactions, and top messages by number of reacts received.</div>', 
+    st.markdown(f'<div class="caption">Identify most used reacts, group dynamics, and top messages by number of reacts received.</div>', 
                 unsafe_allow_html = True)
     given, received, react_fig1, react_fig2, top_msgs, top_msgs_participant = metrics.react_analysis()
     col1, col2 = st.columns(2)
@@ -192,9 +190,20 @@ def generate_report(args, group_name, chat_history):
     # Section 5
     # Display word length aggregates 
     st.markdown(f'<div class="subheader">Word Analysis', unsafe_allow_html = True)
-    st.markdown(f'<div class="caption">Identify most used reacts, group interactions, and top messages by number of reacts received.</div>', 
+    st.markdown(f'<div class="caption">Analyse messages lengths by participant and general tone through sentiment and emotion analysis.</div>', 
                 unsafe_allow_html = True)
-    # metrics.word_analysis()
+    word_length_fig, wordclouds, sentiment_fig, emotion_fig = metrics.word_analysis()
+
+    st.plotly_chart(word_length_fig)
+
+    # Display chat and participant word clouds
+    st.plotly_chart(wordclouds)
+
+    # Display sentiment and emotion analysis chart
+    st.plotly_chart(sentiment_fig)
+    st.plotly_chart(emotion_fig)
+
+    st.markdown(f'<div class="caption">End of report.</div>', unsafe_allow_html = True)
 
 def create_card(title, content):
 

@@ -7,10 +7,10 @@
 
 from collections import Counter
 from datetime import datetime, timedelta
-import matplotlib.pyplot as plt
 from nltk.corpus import stopwords
-import os
+import numpy as np
 import pandas as pd
+from PIL import Image
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -29,6 +29,7 @@ stopwords = set(stopwords.words('english'))
 
 # Check if GPU exists for running transformers models
 selected_device = device('cuda' if cuda.is_available() else 'cpu')
+print('\nUsing ' + str(selected_device))
 
 
 class AnalyseChat:
@@ -283,8 +284,12 @@ class AnalyseChat:
         # Find the top 10 most and least active days in the chat
         activity_by_date = self.chat_history.pivot_table(index = 'date', columns = 'sender_name', values = 'timestamp_ms', aggfunc = 'count', fill_value = 0)
         activity_by_date['total'] = activity_by_date.sum(axis = 1)
-        top_10_most_active = activity_by_date.nlargest(10, 'total').drop(columns = ['total'])
-        top_10_least_active = activity_by_date.nsmallest(10, 'total').drop(columns = ['total'])
+        top_10_most_active = activity_by_date.nlargest(10, 'total')
+        top_10_most_active_total = top_10_most_active['total']
+        top_10_most_active = top_10_most_active.drop(columns = ['total'])
+        top_10_least_active = activity_by_date.nsmallest(10, 'total')
+        top_10_least_active_total = top_10_least_active['total']
+        top_10_least_active = top_10_least_active.drop(columns = ['total'])
 
         # Unstack pivot tables
         top_10_most_active_plot = top_10_most_active.stack().reset_index()
@@ -301,10 +306,20 @@ class AnalyseChat:
             trace.showlegend = False
             extremes.add_trace(trace, row = 1, col = 1)
 
+        # Add total interactions as text for each date
+        for _, date in enumerate(top_10_most_active_total.index):
+            extremes.add_annotation(text = f'{top_10_most_active_total[date]}', x = date, y = top_10_most_active_total[date], showarrow = False, yanchor = 'bottom',
+                                    row = 1, col = 1)
+
         # Plot 2 (stacked bar chart)
-        least = px.bar(top_10_least_active_plot, x = 'Date', y = 'Interactions', color = 'Participant', color_discrete_sequence = px.colors.qualitative.Plotly)        
+        least = px.bar(top_10_least_active_plot, x = 'Date', y = 'Interactions', color = 'Participant', color_discrete_sequence = px.colors.qualitative.Plotly)
         for trace in least.data:
             extremes.add_trace(trace, row = 1, col = 2)
+
+        # Add total interactions as text for each date
+        for _, date in enumerate(top_10_least_active_total.index):
+            extremes.add_annotation(text = f'{top_10_least_active_total[date]}', x = date, y = top_10_least_active_total[date], showarrow = False, yanchor='bottom',
+                                    row = 1, col = 2)
 
         extremes.update_layout(barmode = 'stack')
         extremes.update_xaxes(type = 'category', categoryorder = 'array', categoryarray = top_10_most_active_plot['Date'], row = 1, col = 1)
@@ -396,16 +411,16 @@ class AnalyseChat:
         
         # Find the 25 most reacted to messages all-time (in case of tie-breakers, consider the most recent message)
         reacted_msgs_sorted = self.msgs_only.sort_values(by = ['reacts_count', 'date', 'sender_name'], ascending = [False, False, True])
-        top_reacted_msgs = reacted_msgs_sorted[['date', 'sender_name', 'content', 'reacts_count', 'reactions', 'emojis_count', 'media_type', 'content_type']].head(25)
+        top_reacted_msgs = reacted_msgs_sorted[['date', 'sender_name', 'content', 'reacts_count', 'reactions', 'emojis_count', 'media_type']].head(25)
         top_reacted_msgs['reactions'] = top_reacted_msgs['reactions'].astype('str')
-        top_reacted_msgs.columns = ['Date', 'Participant', 'Content', 'Count of Reactions', 'Reactions', 'Count of Emojis', 'Media Type', 'Content Type']
+        top_reacted_msgs.columns = ['Date', 'Participant', 'Content', 'Count of Reactions', 'Reactions', 'Count of Emojis', 'Media Type']
         top_reacted_msgs.reset_index().drop(columns = ['index']).set_index('Date')
 
         # Find the top reacted message for each participant all-time (in case of tie-breakers, consider the most recent message)
         top_reacted_msgs_participant = reacted_msgs_sorted.groupby('sender_name').first().reset_index()
-        top_reacted_msgs_participant = top_reacted_msgs_participant[['date', 'sender_name', 'content', 'reacts_count', 'reactions', 'emojis_count', 'media_type', 'content_type']]
+        top_reacted_msgs_participant = top_reacted_msgs_participant[['date', 'sender_name', 'content', 'reacts_count', 'reactions', 'emojis_count', 'media_type']]
         top_reacted_msgs_participant['reactions'] = top_reacted_msgs_participant['reactions'].astype('str')
-        top_reacted_msgs_participant.columns = ['Date', 'Participant', 'Content', 'Count of Reactions', 'Reactions', 'Count of Emojis', 'Media Type', 'Content Type']
+        top_reacted_msgs_participant.columns = ['Date', 'Participant', 'Content', 'Count of Reactions', 'Reactions', 'Count of Emojis', 'Media Type']
         top_reacted_msgs_participant.reset_index().drop(columns = ['index']).set_index('Date')
 
         return reactions_given_participant, reactions_received_participant, fig, heatmap, top_reacted_msgs, top_reacted_msgs_participant
@@ -438,24 +453,44 @@ class AnalyseChat:
 
         # Process text to normalise text, and remove stop words, emojis, and punctuation for word cloud plots
         self.texts_only['processed_text'] = self.texts_only['content'].apply(self.process_text)
+             
+        # Create figure with subplots for wordclouds across all participants and group overall
+        cloud_fig = go.Figure()
+        rows = (len(self.participants) // 2) + 1
+        cols = 2
+        titles = ['Top 75 Most Words Used by Chat Overall']
+        [titles.append('Top 75 Most Words Used by ' + name) for name in self.participants]
+        cloud_fig = make_subplots(rows = rows, cols = cols, subplot_titles = titles)
 
-        # Build word cloud for chat overall (top 75 words)
+        # Build wordcloud for group overall (top 75 words)
         most_common_chat = Counter(' '.join(self.texts_only['processed_text']).split()).most_common(75)
-        wordcloud_chat = WordCloud(width = 800, height = 600, background_color = 'white').generate_from_frequencies(dict(most_common_chat))
-        plt.figure(figsize = (10, 6))
-        plt.title('75 Most Common Words used in Chat')
-        plt.imshow(wordcloud_chat, interpolation = 'bilinear')
-        plt.axis('off')
+        wordcloud_chat = WordCloud(width = 1600, height = 1000, background_color = 'white').generate_from_frequencies(dict(most_common_chat))
+        
+        # Convert word cloud to image, resize image with bilinear interpolation, and add to figure
+        wordcloud_image = wordcloud_chat.to_image()
+        wordcloud_image = wordcloud_image.resize((1600, 1000), Image.BILINEAR)
+        wordcloud_array = np.array(wordcloud_image)
+        cloud_fig.add_trace(go.Image(z = wordcloud_array), row = 1, col = 1)
 
         # Build word clouds for each participant (top 75 words)
-        for person in self.participants:
+        for idx, person in enumerate(self.participants):
             words_participant = self.texts_only[self.texts_only['sender_name'] == person]['processed_text']
             most_common_participant = Counter(' '.join(words_participant).split()).most_common(75)
-            wordcloud_partcipant = WordCloud(width = 800, height = 600, background_color = 'white').generate_from_frequencies(dict(most_common_participant))
-            plt.figure(figsize = (10, 6))
-            plt.title('75 Most Common Words used by ' + person)
-            plt.imshow(wordcloud_partcipant, interpolation = 'bilinear')
-            plt.axis('off')
+            wordcloud_participant = WordCloud(width = 1600, height = 1000, background_color = 'white').generate_from_frequencies(dict(most_common_participant))
+            
+            # Convert word cloud to image, resize image with bilinear interpolation, and add to figure
+            wordcloud_image_participant = wordcloud_participant.to_image()
+            wordcloud_image_participant = wordcloud_image_participant.resize((1600, 1000), Image.BILINEAR)
+            wordcloud_array_participant = np.array(wordcloud_image_participant)
+            cloud_fig.add_trace(go.Image(z = wordcloud_array_participant), row = ((idx + 1) // cols) + 1, col = ((idx + 1) % cols) + 1)
+       
+        cloud_fig.update_xaxes(showgrid = False, zeroline = False, showticklabels = False, visible = False)
+        cloud_fig.update_yaxes(showgrid = False, zeroline = False, showticklabels = False, visible = False)
+        cloud_fig.update_layout(margin = dict(t = 40, l = 30, b = 40, r = 30), font = dict(size = 12), height = 2100)
+        for annotation in cloud_fig['layout']['annotations']:
+            annotation['yanchor'] = 'bottom'
+            annotation['y'] = annotation['y'] + 0.01  
+            annotation['font'] = dict(size = 16)
 
         # Convert column of messages to Dataset object for efficient model processing
         data_dict = {'text': self.texts_only['content'].tolist()}
@@ -469,19 +504,32 @@ class AnalyseChat:
         # Retain the label with the highest score
         self.texts_only['emotion'] = self.emotion_analysis(text_dataset, self.batch_size)
 
-        proportions = self.texts_only.groupby(['sender_name', 'sentiment']).size().unstack(fill_value=0).apply(lambda x: x / x.sum(), axis=1)
-        proportions = proportions.reset_index().melt(id_vars='sender_name', var_name='sentiment', value_name='proportion')
+        # self.texts_only = pd.read_csv('checkpoint.csv')
 
-        # Plot using seaborn
-        # plt.figure(figsize=(10, 6))
-        # sns.barplot(x='sender_name', y='proportion', hue='sentiment', data=proportions, palette='Set3')
-        # plt.xlabel('Sender Name')
-        # plt.ylabel('Proportion of Messages')
-        # plt.title('Proportion of Sentiments by Sender')
-        # plt.tight_layout()
-        # plt.show()
+        # Generate sentiment and emotion datasets for plotting
+        sentiment_proportions = self.texts_only.groupby(['sender_name', 'sentiment']).size().unstack(fill_value = 0).apply(lambda x: 100 * x / x.sum(), axis = 1)
+        sentiment_proportions = sentiment_proportions.reset_index().melt(id_vars = 'sender_name', var_name = 'sentiment', value_name = 'proportion')
+        sentiment_proportions.columns = ['Participant', 'Sentiment', 'Proportion (%)']
+
+        emotion_proportions = self.texts_only.groupby(['sender_name', 'emotion']).size().unstack(fill_value = 0).apply(lambda x: 100 * x / x.sum(), axis = 1)
+        emotion_proportions = emotion_proportions.reset_index().melt(id_vars = 'sender_name', var_name = 'emotion', value_name = 'proportion')
+        emotion_proportions.columns = ['Participant', 'Emotion', 'Proportion (%)']
+
+        # Plot grouped bar chart for sentiment analysis
+        sentiment_fig = px.bar(sentiment_proportions, x = 'Participant', y = 'Proportion (%)', color = 'Sentiment', color_discrete_sequence = px.colors.qualitative.Plotly,
+                               text = 'Proportion (%)')    
+        sentiment_fig.update_traces(texttemplate = '%{text:.2f}%', textposition = 'outside', textfont = dict(size = 12))
+        sentiment_fig.update_xaxes(tickangle = 0, tickfont = dict(size = 10))
+        sentiment_fig.update_layout(title = 'Sentiment Analysis by Participant', barmode = 'group')
+
+        # Plot grouped bar chart for emotion analysis
+        emotion_fig = px.bar(emotion_proportions, x = 'Participant', y = 'Proportion (%)', color = 'Emotion', color_discrete_sequence = px.colors.qualitative.Plotly,
+                             text = 'Proportion (%)')        
+        emotion_fig.update_traces(texttemplate = '%{text:.2f}%', textposition = 'outside', textfont = dict(size = 10))
+        emotion_fig.update_xaxes(tickangle = 0, tickfont = dict(size = 10))
+        emotion_fig.update_layout(title = 'Emotion Analysis by Participant', barmode = 'group')
         
-        return
+        return word_fig, cloud_fig, sentiment_fig, emotion_fig
 
     @staticmethod
     def convert_hex_to_rgb(hex_list):
@@ -521,7 +569,7 @@ class AnalyseChat:
         # Collect results and track progress
         labels = []
         for result in tqdm(results, total = len(dataset), position = 0, leave = True, desc = 'Sentiment Analysis'):
-            labels.append(result['label'])
+            labels.append(result['label'].title())
 
         return labels 
     
@@ -538,7 +586,7 @@ class AnalyseChat:
         # Collect results and track progress
         labels = []
         for result in tqdm(results, total = len(dataset), position = 0, leave = True, desc = 'Emotion Analysis'):
-            labels.append(result['label'])
+            labels.append(result['label'].title())
 
         return labels 
     
