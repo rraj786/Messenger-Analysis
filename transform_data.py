@@ -1,6 +1,7 @@
 '''
     The following script reads in Messenger chats provided in JSON format
     and parses them into a Pandas dataframe for further analysis.
+    
     Author: Rohit Rajagopal
 '''
 
@@ -13,6 +14,16 @@ from tzlocal import get_localzone
 
 
 def transform_data(df):
+
+    """
+        Transforms raw chat data by adding various time-based and content-related columns.
+
+        Args:
+            - df (pd.DataFrame): DataFrame containing raw chat data.
+
+        Returns:
+            - df (pd.DataFrame): Transformed and sorted DataFrame with additional columns.
+    """
 
     # Create column for datetime in local time zone
     df['timestamp_sec'] = df['timestamp_ms'] / 1000.0
@@ -66,6 +77,16 @@ def transform_data(df):
   
 def extract_reactions(reactions):
 
+    """
+        Extracts and decodes emoji reactions from chat messages.
+
+        Args:
+            - reactions (list): List of reaction dictionaries.
+
+        Returns:
+            - reactions (list): List of decoded emojis.
+    """
+
     # Extract reactions from each message
     for react in reactions:
         emoji_char = react['reaction'].encode('latin1').decode('utf8')
@@ -76,6 +97,16 @@ def extract_reactions(reactions):
     return reactions
 
 def categorise_media_type(row):
+
+    """
+        Categorises the type of media for chat content
+
+        Args:
+            - row (pd.Series): DataFrame row representing chat content.
+
+        Returns:
+            - str: Media type (e.g., 'Photo/Video', 'File Attachment').
+    """
        
     # Assign each instance to a media type (if there are multiple media types, then the hierarchy below selects the
     # 'primary' type)
@@ -99,6 +130,16 @@ def categorise_media_type(row):
         return 'Other'
     
 def categorise_content_type(row):
+
+    """
+        Categorises the type of content for chat content based on its text.
+
+        Args:
+            - row (pd.Series): DataFrame row representing chat content.
+
+        Returns:
+            - str: Content type (e.g., 'In Call Settings', 'Started Call').
+    """
     
     # Set up phrases to search for and compile regex patterns
     patterns = {

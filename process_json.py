@@ -1,6 +1,7 @@
 '''
     The following script reads in Messenger chats provided in JSON format
     and parses them into a Pandas dataframe for further analysis.
+    
     Author: Rohit Rajagopal
 '''
 
@@ -13,14 +14,14 @@ from transform_data import *
 def process_json(directory):
 
     """
-        Read in all JSON files from specified directory and construct a 
-        Pandas dataframe containing all content.
-        
-        Inputs:
-            - directory (str)
+        Reads JSON files from a directory and combines them into a single Pandas DataFrame.
+
+        Args:
+            - directory (str): Path to the directory containing JSON files.
 
         Returns:
-            - chat_history (df)
+            - group_name (str): Name of the chat group.
+            - chat_history (pd.DataFrame): DataFrame with parsed chat data.
     """
 
     messages = []

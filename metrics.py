@@ -1,6 +1,7 @@
 '''
     The following script contains various class methods to analyse Messenger
     chats and save outputs to the designated directory.
+
     Author: Rohit Rajagopal
 '''
 
@@ -34,12 +35,27 @@ print('\nUsing ' + str(selected_device))
 
 class AnalyseChat:
 
-    def __init__(self, chat_history, batch_size, save_dir):
+    """
+        A class for analysing Messenger chat history across various metrics.
+
+        Attributes:
+            - chat_history (pd.DataFrame): The full chat history including various content types.
+            - batch_size (int): The size of batches used for processing in sentiment and emotion analysis.
+            - msgs_only (pd.DataFrame): Filtered chat history containing only messages and shared locations.
+            - texts_only (pd.DataFrame): Filtered messages that are text-only (excluding media).
+            - participants (list): List of unique participants in the chat.
+
+        Notes:
+            - React notifications are excluded from analysis as they are only relevant to individual participants.
+            - Sentiment and emotion analyses are performed using pre-trained models and require processing in batches.
+            - The models are expected to take a while to run, so please enable CUDA/local GPUs.
+    """
+
+    def __init__(self, chat_history, batch_size):
 
         # Remove any react notifications as these are only relevant to the participant that downloaded the messages
         self.chat_history = chat_history[chat_history['content_type'] != 'React Notification']
         self.batch_size = batch_size
-        self.save_dir = save_dir
 
         # A message is deemed to be any form of content that can receive reacts
         msgs_only_filter = ['Message', 'Shared Location']
@@ -52,6 +68,17 @@ class AnalyseChat:
         self.participants = sorted(self.chat_history['sender_name'].unique())
 
     def headline_stats(self):
+
+        """
+            Compute headline statistics from chat history, such as total interactions, most active member, and 
+            average response time.
+
+            Args:
+                None
+
+            Returns:
+                - aggs (list): List containing various aggregated group chat statistics.
+        """
 
         multimedia_filters = ['Photo/Video', 'File Attachment', 'Shared Link', 'Audio', 'Gif', 'Sticker']
 
@@ -93,6 +120,18 @@ class AnalyseChat:
         return aggs
     
     def summary_stats(self):
+
+        """
+            Computes and visualises summary statistics from chat history such as message breakdown and reactions 
+            received.
+
+            Args:
+                None
+
+            Returns:
+                - summary (pd.DataFrame): DataFrame containing summary statistics for each participant.
+                - fig (Figure): Plotly figure containing various subplots visualising the summary statistics.
+        """
 
         # Find messages sent and reactions received aggregations
         summary = self.msgs_only.groupby('sender_name').agg(messages_sent = ('timestamp_ms', 'count'), 
@@ -184,6 +223,22 @@ class AnalyseChat:
         return summary, fig
 
     def cumulative_messages_over_time(self):
+
+        """
+            Computes and visualises cumulative message counts over time.
+
+            Args:
+                None
+
+            Returns:
+                - fig (Figure): Plotly figure showing overall cumulative message count over time.
+                - racecar_output (Figure): Interactive race plot showing cumulative message count by participant over time.
+
+            Notes:
+                - Modified raw source code (__get_colors() method in plots.py) in raceplotly package as I wasn't able to manually 
+                  select the colours in the bar plot.
+                - Have raised an issue under https://github.com/lucharo/raceplotly/issues/22.
+        """
         
         # Find cumulative count of messages sent by date
         self.msgs_only['cumulative_count_msgs'] = self.msgs_only.groupby('sender_name').cumcount() + 1
@@ -212,6 +267,16 @@ class AnalyseChat:
 
     def raw_messages_over_time(self):
 
+        """
+            Computes and visualises raw message counts by week.
+
+            Args:
+                None
+
+            Returns:
+                - fig (Figure): Interactive Plotly line chart showing raw message counts by participant and week.
+        """
+
         # Find count of messages sent by each participant per week only (captures low-level changes well without being too granular)]
         pivot_msg_counts = self.msgs_only.pivot_table(index = 'week_start', columns = 'sender_name', values = 'timestamp_ms', aggfunc = 'count')
         pivot_msg_counts = pivot_msg_counts.fillna(0)
@@ -234,6 +299,18 @@ class AnalyseChat:
         return fig
     
     def chat_activity(self):
+
+        """
+            Analyses and visualises chat activity across different time periods.
+
+            Args:
+                None
+
+            Returns:
+                - fig (Figure): Plotly figure with subplots showing interactions over various time periods.
+                - heatmap (Figure): Plotly heatmap showing chat activity by hour of day and day of week.
+                - extremes (Figure): Plotly figure with subplots showing the top 10 most and least active days.
+        """
 
         # Create list of time periods to consider
         plot_period = ['hour_of_day', 'day_of_week', 'week_number', 'month', 'quarter_number', 'year'] 
@@ -328,6 +405,21 @@ class AnalyseChat:
         return fig, heatmap, extremes
     
     def react_analysis(self):
+
+        """
+            Analyses and visualises reaction data in the chat by participant and over time.
+
+            Args:
+                None
+
+            Returns:
+                - reactions_given_participant (pd.DataFrame): DataFrame showing the top 10 reactions given by each participant.
+                - reactions_received_participant (pd.DataFrame): DataFrame showing the top 10 reactions received by each participant.
+                - fig (Figure): Plotly figure with subplots displaying various high-level views of reactions.
+                - heatmap (Figure): Plotly heatmap showing reactions sent and received by participants.
+                - top_reacted_msgs (pd.DataFrame): DataFrame containing the 25 most reacted-to messages.
+                - top_reacted_msgs_participant (pd.DataFrame): DataFrame containing the top reacted message for each participant.
+        """
 
         # Extract actor and react emoji into new columns
         reacts_exploded = self.msgs_only.explode('reactions').dropna(subset = ['reactions'])
@@ -427,15 +519,25 @@ class AnalyseChat:
 
     def word_analysis(self):
 
-        # Add to notes in docstring, no processing was done for sentiment/emotion analysis such as removing
-        # stopwords as raw text offers better insights on what language people actually use (are they more self-centered
-        # or do they speak about everyone inclusively)
-        # Also, an example for sentiment/emotion analysis - 'I am not having a great day'
-        # If we were to remove NLTK stopwords from this, it would be 'great day' which is evidently very different
-        # to the original text and has a completely different sentiment to what was originally intended 
-        # Left emojis in as well as they affect the output of sentiment/emotion analysis
-        # Wordclouds removed stopwords, lowered text and non-alphanumeric
-        # Topic modelling removed stopwords, lowered text, non-alphanumeric and lemmatisation
+        """
+            Analyses and visualises the words and sentimental/emotional tone used in text messages.
+
+            Args:
+                None
+
+            Returns:
+                - word_fig (Figure): A bar plot of average message lengths by participant.
+                - cloud_fig (Figure): A figure with word clouds for overall chat and individual participants.
+                - sentiment_fig (Figure): A grouped bar chart of sentiment proportions by participant.
+                - emotion_fig (Figure): A grouped bar chart of emotion proportions by participant.
+
+            Notes:
+                - No word processing is done for sentiment/emotion analysis (e.g. removing stopwords), as raw text
+                  offers more insights.
+                - For example, if NLTK stopwords were removed, the phrase "I am not having a great day" would become "great day" 
+                  which evidently evokes a completely different sentiment/emotion to the original text.
+                - Emojis also affect the output of sentiment/emotion analysis.
+        """
 
         # Get word length aggregates for text messages sent in chat
         word_summary_chat = self.texts_only.agg(average_words = ('word_count', 'mean'))
@@ -504,8 +606,6 @@ class AnalyseChat:
         # Retain the label with the highest score
         self.texts_only['emotion'] = self.emotion_analysis(text_dataset, self.batch_size)
 
-        # self.texts_only = pd.read_csv('checkpoint.csv')
-
         # Generate sentiment and emotion datasets for plotting
         sentiment_proportions = self.texts_only.groupby(['sender_name', 'sentiment']).size().unstack(fill_value = 0).apply(lambda x: 100 * x / x.sum(), axis = 1)
         sentiment_proportions = sentiment_proportions.reset_index().melt(id_vars = 'sender_name', var_name = 'sentiment', value_name = 'proportion')
@@ -533,7 +633,17 @@ class AnalyseChat:
 
     @staticmethod
     def convert_hex_to_rgb(hex_list):
-        
+
+        """
+            Converts a list of hexadecimal color codes to RGB format.
+
+            Args:
+                hex_list (list): A list of color codes in hexadecimal format (e.g., '#FF5733').
+
+            Returns:
+                rgb_list (list): A list of color codes in RGB format (e.g., 'rgb(255, 87, 51)').
+        """
+
         # Iterate through list and convert hex string to rgb format
         rgb_list = []
         for hex_colour in hex_list:
@@ -544,6 +654,16 @@ class AnalyseChat:
 
     @staticmethod
     def process_text(text):
+
+        """
+            Processes and normalises text for further analysis.
+
+            Args:
+                text (str): The text to be processed.
+
+            Returns:
+                text (str): The processed text with stop words and non-alphanumeric characters removed.
+        """
 
         # Convert text to lower case
         text = text.lower()
@@ -558,6 +678,22 @@ class AnalyseChat:
     
     @staticmethod
     def sentiment_analysis(dataset, batch_size):
+
+        """
+            Analyses sentiment of the provided text data using a pre-trained model.
+
+            Args:
+                dataset (Dataset): A Dataset object containing text data.
+                batch_size (int): The batch size for processing the text data.
+
+            Returns:
+                labels (list): A list of sentiment labels for each text entry in the dataset.
+
+            Notes:
+                - Uses the cardiffnlp/twitter-roberta-base-sentiment-latest model 
+                  (https://huggingface.co/cardiffnlp/twitter-roberta-base-sentiment-latest).
+                - Each text is classified into sentiment categories (e.g., positive, negative, neutral).
+        """
 
         # Intialise transformers model for sentiment analysis
         sentiment_model = pipeline('text-classification', model = 'cardiffnlp/twitter-roberta-base-sentiment-latest', 
@@ -575,6 +711,22 @@ class AnalyseChat:
     
     @staticmethod
     def emotion_analysis(dataset, batch_size):
+
+        """
+            Analyses emotion of the provided text data using a pre-trained model.
+
+            Args:
+                dataset (Dataset): A Dataset object containing text data.
+                batch_size (int): The batch size for processing the text data.
+
+            Returns:
+                labels (list): A list of emotion labels for each text entry in the dataset.
+
+            Notes:
+                - Uses the michellejieli/emotion_text_classifier model
+                  (https://huggingface.co/michellejieli/emotion_text_classifier).
+                - Each text is classified into emotion categories (e.g., joy, sadness, anger).
+        """
 
         # Intialise transformers model for emotion analysis
         emotion_model = pipeline('text-classification', model = 'michellejieli/emotion_text_classifier', 

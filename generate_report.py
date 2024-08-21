@@ -1,6 +1,7 @@
 '''
     The following script generates a Streamlit app to summarise all the key
     metrics from conversations.
+
     Author: Rohit Rajagopal
 '''
 
@@ -9,10 +10,25 @@ from metrics import *
 import streamlit as st
 
 
-def generate_report(chat_history, group_name, args):
+def generate_report(chat_history, group_name, batch_size):
+       
+    """
+        Generates an interactive Streamlit report for Messenger group chat history.
+
+        Args:
+            - chat_history (pd.DataFrame): DataFrame of chat history.
+            - group_name (str): Name of the Messenger group.
+            - batch_size (int): The batch size for processing the text data.
+
+        Returns:
+            None
+        
+        Notes:
+            - Application opens in browser as http://localhost:8501/.
+    """
 
     # Initialise AnalyseChat class
-    metrics = AnalyseChat(chat_history, args.batch_size, args.save_dir)
+    metrics = AnalyseChat(chat_history, batch_size)
 
     # Configure notebook layout
     st.set_page_config(layout = 'wide')
@@ -206,6 +222,17 @@ def generate_report(chat_history, group_name, args):
     st.markdown(f'<div class="caption">End of report.</div>', unsafe_allow_html = True)
 
 def create_card(title, content):
+
+    """
+        Displays a styled metric card.
+
+        Args:
+            - title (str): Card title.
+            - content (str): Metric value
+
+        Returns:
+            None
+    """
 
     # Create container to house metric
     with st.container():
