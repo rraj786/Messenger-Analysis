@@ -87,7 +87,7 @@ def generate_report(chat_history, group_name, batch_size):
     # Section 1
     # Display headline stats as cards across two rows
     st.markdown(f'<div class="subheader">Summary', unsafe_allow_html = True)
-    st.markdown(f'<div class="caption">High-level summary of Messenger group chat metrics with plots to highlight key trends.</div>', unsafe_allow_html = True)
+    st.markdown(f'<div class="caption">An overview of Messenger group chat metrics, featuring plots to highlight significant trends and key insights.</div>', unsafe_allow_html = True)
    
     aggs = metrics.headline_stats()
     
@@ -166,7 +166,7 @@ def generate_report(chat_history, group_name, batch_size):
     # Section 3 
     # Display chat activity over different time periods
     st.markdown(f'<div class="subheader">Chat Activity', unsafe_allow_html = True)
-    st.markdown(f'<div class="caption">Analyse chat activity patterns to pinpoint peak engagement times and identify periods of high and low chat activity.</div>', 
+    st.markdown(f'<div class="caption">Examination of chat activity patterns to identify peak engagement times and determine the most and least active days historically.</div>', 
                 unsafe_allow_html = True)
     
     periods_fig, activity_fig, extremes_fig = metrics.chat_activity()
@@ -180,7 +180,7 @@ def generate_report(chat_history, group_name, batch_size):
     # Section 4
     # Display top used and received reacts by participant
     st.markdown(f'<div class="subheader">Reactions Analysis', unsafe_allow_html = True)
-    st.markdown(f'<div class="caption">Identify most used reacts, group dynamics, and top messages by number of reacts received.</div>', 
+    st.markdown(f'<div class="caption">Identify most used reacts,group and individual interactions, and top messages by number of reacts received.</div>', 
                 unsafe_allow_html = True)
     given, received, react_fig1, react_fig2, top_msgs, top_msgs_participant = metrics.react_analysis()
     col1, col2 = st.columns(2)
