@@ -152,3 +152,10 @@ The Streamlit report contains 5 sections to capture various trends
 4. Reactions Analysis: Identify most used reacts,group and individual interactions, and top messages by number of reacts received.
 
 5. Word Analysis: Analyse messages lengths by participant and general tone through sentiment and emotion analysis.
+
+## References
+
+- Jochen Hartmann, "Emotion English DistilRoBERTa-base". https://huggingface.co/j-hartmann/emotion-english-distilroberta-base/, 2022.
+Ashritha R Murthy and K M Anil Kumar 2021 IOP Conf. Ser.: Mater. Sci. Eng. 1110 012009
+
+- Cardiff NLP, "CardiffNLP Twitter RoBERTa Base Sentiment". https://huggingface.co/cardiffnlp/twitter-roberta-base-sentiment-latest/, 2024.
